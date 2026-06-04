@@ -1,0 +1,150 @@
+# =============================================================================
+# Zopkit Suite — Terraform variables (EXAMPLE)
+# =============================================================================
+# Copy to terraform.tfvars and adjust for your environment:
+#   cp terraform.tfvars.example terraform.tfvars
+#
+# Every variable declared in variables.tf is represented below with a sane
+# prod default and a guidance comment. Values shown match the frozen
+# foundation defaults; uncommented ones you will almost always want to set
+# (cluster_admin_role_arns, alarm_email) before applying.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Identity / naming
+# -----------------------------------------------------------------------------
+# Project slug. Drives local.name_prefix = "<project>-<environment>" ("zopkit-prod"),
+# the k8s namespace, ECR repo prefixes, Secrets Manager paths, etc. Keep short
+# and DNS/label-safe. Changing this after apply renames nearly everything.
+project = "zopkit"
+
+# Deployment environment. Combined with project into the name prefix/namespace
+# and Secrets Manager secret names ("zopkit/<environment>/<app>"). Use "prod"
+# for production. Distinct values give you fully isolated stacks per env.
+environment = "prod"
+
+# -----------------------------------------------------------------------------
+# Regions
+# -----------------------------------------------------------------------------
+# Primary region for the VPC, EKS cluster, ALB, the PRIMARY-region ACM cert,
+# Valkey/ElastiCache, SNS/SQS/EventBridge, ECR, and (by default) all S3 buckets.
+aws_region = "us-east-1"
+
+# Data region for CRM/FA SES sending and any future split of crm/fa S3 storage
+# (s3.tf currently keeps ALL buckets in the default provider region — see the
+# comment in s3.tf about moving crm_attachments/fa_receipts to provider
+# aws.crm_data). Set to match where you want CRM/FA email + data residency.
+# Can equal aws_region if you do not need a separate data region.
+data_region = "us-east-1"
+
+# -----------------------------------------------------------------------------
+# DNS / domain
+# -----------------------------------------------------------------------------
+# Apex domain for the suite. FQDNs are derived per app, e.g.
+#   app.zopkit.com / crm.zopkit.com / accounting.zopkit.com (frontends, CloudFront),
+#   crm-api.zopkit.com etc. (APIs, ALB via external-dns).
+root_domain = "zopkit.com"
+
+# true  -> Terraform CREATES the Route53 public hosted zone for root_domain
+#          (you must then point your registrar's NS records at the new zone).
+# false -> Terraform LOOKS UP an existing hosted zone for root_domain
+#          (data.aws_route53_zone). Use false if the zone already exists.
+create_route53_zone = false
+
+# -----------------------------------------------------------------------------
+# Networking (VPC)
+# -----------------------------------------------------------------------------
+# CIDR block for the VPC. /16 leaves ample room for private/public/intra
+# subnets across the AZs. Must not overlap with any peered/on-prem network.
+vpc_cidr = "10.0.0.0/16"
+
+# Number of Availability Zones to spread subnets across. 3 is the prod-grade
+# default for HA; 2 is acceptable for cost-sensitive setups. Bounded by the
+# AZs actually available in aws_region.
+az_count = 3
+
+# true  -> ONE shared NAT gateway for all AZs (cheaper, single point of egress).
+# false -> one NAT gateway PER AZ (HA egress, higher cost). Use false for prod
+#          if NAT-AZ resilience matters; true to save money in lower envs.
+single_nat_gateway = false
+
+# -----------------------------------------------------------------------------
+# EKS cluster
+# -----------------------------------------------------------------------------
+# Kubernetes control-plane version. Pin explicitly and bump deliberately; must
+# be a version currently offered by EKS in aws_region.
+kubernetes_version = "1.30"
+
+# Managed node group instance types (list = mixed-instances candidates).
+# m6i.large (2 vCPU / 8 GiB) is a balanced default for the backend workloads.
+node_instance_types = ["m6i.large"]
+
+# Managed node group autoscaling bounds and initial size. min<=desired<=max.
+# Sized for the web + worker deployments plus cluster addons; raise max to give
+# the Cluster Autoscaler / HPA headroom.
+node_group_min     = 2
+node_group_max     = 6
+node_group_desired = 3
+
+# IAM role/user ARNs granted cluster-admin (system:masters) access-entry on EKS.
+# SET THIS — include your operators' SSO/role ARNs so you can run kubectl/helm.
+# Example:
+# cluster_admin_role_arns = [
+#   "arn:aws:iam::111122223333:role/AWSReservedSSO_AdministratorAccess_abc123",
+#   "arn:aws:iam::111122223333:role/zopkit-deploy",
+# ]
+cluster_admin_role_arns = []
+
+# true  -> EKS API server endpoint is public (restricted by the CIDRs below).
+# false -> private-only endpoint (you must reach it from inside the VPC, e.g.
+#          via VPN/bastion). Public + tight CIDRs is the common prod default.
+cluster_public_access = true
+
+# CIDRs allowed to reach the public EKS API endpoint when cluster_public_access
+# is true. LOCK THIS DOWN to your office/VPN/CI egress ranges. The 0.0.0.0/0
+# default below is open to the world — override it in prod.
+cluster_public_access_cidrs = ["0.0.0.0/0"]
+
+# -----------------------------------------------------------------------------
+# Valkey (ElastiCache) — suite permission/auth cache, fleet-wide invalidation
+# -----------------------------------------------------------------------------
+# Cache node instance type. cache.t4g.small is a reasonable prod-entry default;
+# size up (e.g. cache.m7g.large) for higher throughput / connection counts.
+valkey_node_type = "cache.t4g.small"
+
+# Number of REPLICA nodes (read replicas) in the replication group.
+# 0 -> single node (no automatic failover / multi-AZ).
+# >=1 -> automatic_failover_enabled + multi_az_enabled are turned on for HA.
+# Use 1+ in prod for resilience.
+valkey_replicas = 1
+
+# -----------------------------------------------------------------------------
+# Cognito
+# -----------------------------------------------------------------------------
+# Hosted-UI domain prefix. The actual domain becomes
+# "<cognito_domain_prefix>-<environment>" (e.g. "zopkit-auth-prod") under
+# amazoncognito.com. Must be globally unique across all AWS Cognito domains —
+# pick something distinctive.
+cognito_domain_prefix = "zopkit-auth"
+
+# -----------------------------------------------------------------------------
+# Container images
+# -----------------------------------------------------------------------------
+# Default image tag wired into Helm rendering when not overridden per deploy.
+# CI typically pushes/deploys by git SHA and overrides this with --set
+# image.tag=$GITHUB_SHA, so "latest" here is just a placeholder fallback.
+image_tag = "latest"
+
+# -----------------------------------------------------------------------------
+# Observability / alerting
+# -----------------------------------------------------------------------------
+# CloudWatch Logs retention (days) for the per-app log groups
+# (/eks/zopkit-prod/<app>). 30 is a common prod default; raise for compliance
+# (e.g. 90/365) at higher storage cost.
+log_retention_days = 30
+
+# Email address subscribed to the ops alarms SNS topic (DLQ-not-empty alarms,
+# etc.). Leave "" to skip creating the email subscription. If set, AWS sends a
+# confirmation email that must be ACCEPTED before alarms are delivered.
+# SET THIS in prod so DLQ/alarm notifications reach someone.
+alarm_email = ""

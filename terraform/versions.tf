@@ -1,0 +1,39 @@
+# ---------------------------------------------------------------------------
+# Provider + Terraform version constraints for the Zopkit suite IaC.
+# ---------------------------------------------------------------------------
+terraform {
+  required_version = ">= 1.6.0"
+
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.60"
+    }
+    kubernetes = {
+      source  = "hashicorp/kubernetes"
+      version = "~> 2.31"
+    }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 2.14"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.6"
+    }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.4"
+    }
+  }
+
+  # Remote state is strongly recommended for a shared platform stack.
+  # Fill in and uncomment, then `terraform init -migrate-state`.
+  # backend "s3" {
+  #   bucket         = "zopkit-tfstate-<ACCOUNT_ID>"
+  #   key            = "suite/terraform.tfstate"
+  #   region         = "us-east-1"
+  #   dynamodb_table = "zopkit-tflock"
+  #   encrypt        = true
+  # }
+}
