@@ -1,0 +1,82 @@
+{{/*
+Worker Deployments — one per entry in .Values.workers.
+
+These are long-running processes that are NOT the web server: they run a custom
+`command` instead of the image's default entrypoint, expose NO HTTP ports, and
+carry NO HTTP probes. Primary user today is FA's SEPARATE SQS consumer
+(`node dist/scripts/accounting-sqs-consumer-runner.js`); FA Temporal/orchestration
+workers and any wrapper-side workers slot in the same way (see values-fa.yaml).
+
+Each worker shares the web pod's image, ServiceAccount (IRSA), env (ConfigMap +
+ExternalSecrets-backed Secret), security context, and resources. We are inside a
+`range` here, so `.` is the per-worker object — use `$` to reach the chart root.
+*/}}
+{{- range .Values.workers }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "zb.fullname" $ }}-{{ .name }}
+  namespace: {{ $.Values.namespace }}
+  labels:
+    {{- include "zb.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: worker
+    zopkit.com/worker: {{ .name | quote }}
+spec:
+  # Workers carry no ALB stickiness/leader concerns of their own; default 1.
+  # FA's SQS consumer is idempotent (processed_mq_events) and MAY scale >1.
+  replicas: {{ .replicas | default 1 }}
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "zb.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: worker
+      zopkit.com/worker: {{ .name | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "zb.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: worker
+        zopkit.com/worker: {{ .name | quote }}
+      {{- with $.Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "zb.serviceAccountName" $ }}
+      terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+      containers:
+        - name: {{ include "zb.app" $ }}-{{ .name }}
+          image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          # Override the image entrypoint with the worker's process.
+          command:
+            {{- toYaml .command | nindent 12 }}
+          # Same config + secrets as the web pod (ConfigMap + ESO-synced Secret).
+          envFrom:
+            - configMapRef:
+                name: {{ include "zb.fullname" $ }}-env
+            - secretRef:
+                name: {{ include "zb.fullname" $ }}-secret
+          # No HTTP server here -> no ports and no httpGet probes. Liveness is left
+          # to process exit + the Deployment restart policy (the SQS consumer also
+          # owns a DB heartbeat surfaced via the web pod's aggregate health route).
+          resources:
+            {{- toYaml $.Values.resources | nindent 12 }}
+      {{- with $.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

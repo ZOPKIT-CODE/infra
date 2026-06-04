@@ -1,0 +1,107 @@
+# =========================================================================
+# Default values for the zopkit-backend chart. Override per app via
+# values-wrapper.yaml / values-crm.yaml / values-fa.yaml, and inject the
+# Terraform-derived bits (image, env, serviceAccount.roleArn, externalSecret
+# .remoteRef, ingress.host/certArn) at deploy time. See README "Render values".
+# =========================================================================
+
+# app short name: wrapper | crm | fa  (REQUIRED — set in per-app values)
+app: ""
+namespace: zopkit-prod
+
+image:
+  repository: "" # <ecr_repository_urls[...]> from terraform output
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+# Web Deployment replica count. For leader-unsafe apps (crm, fa) this MUST be 1
+# (their EventBridge outbox poller has no leader election) — autoscaling stays off.
+replicaCount: 1
+
+port: 3000
+
+# Rolling update; keep some headroom so health gating doesn't stall deploys.
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# SIGTERM drains pollers/consumers/valkey/sns before exit — give it room.
+terminationGracePeriodSeconds: 45
+
+serviceAccount:
+  create: true
+  name: ""      # defaults to app name
+  roleArn: ""   # <app_irsa_role_arns[app]> — IRSA, no static AWS keys
+
+# ExternalSecrets Operator: sync the per-app Secrets Manager JSON into a k8s
+# Secret, then envFrom it. The ClusterSecretStore "aws-secretsmanager" is created
+# by Terraform (addons.tf).
+externalSecret:
+  enabled: true
+  secretStoreRef: aws-secretsmanager
+  refreshInterval: 1h
+  remoteRef:
+    key: "" # <app_secret_arns[app]> or the secret name, e.g. zopkit/prod/wrapper
+  # Additional Secrets Manager bundles merged into the pod Secret. The Valkey secret
+  # carries REDIS_URL/REDIS_PASSWORD/REDIS_ENABLED (terraform output valkey_secret_name);
+  # render-values.sh injects the real name.
+  sharedKeys:
+    - "zopkit/prod/valkey"
+
+# Non-secret env (from `terraform output -json app_wiring`).env
+env: {}
+
+probes:
+  livenessPath: /health/live
+  readinessPath: /health/ready
+  initialDelaySeconds: 20
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 6
+  startupFailureThreshold: 30
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 1
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+service:
+  type: ClusterIP
+
+ingress:
+  enabled: true
+  className: alb
+  # AWS Load Balancer Controller: internet-facing, shared ALB across the suite.
+  group: zopkit-suite
+  host: ""            # primary API host, e.g. api.zopkit.com
+  extraHosts: []      # e.g. tenant wildcard "*.zopkit.com" for wrapper
+  certArn: ""         # <acm_cert_arn> from terraform
+  websocket: false    # true -> ALB stickiness for /ws
+  healthcheckPath: /health/live
+
+# Extra long-running processes that are NOT the web server (separate commands).
+# Each becomes its own Deployment.
+workers: []
+# - name: consumer
+#   command: ["node", "dist/scripts/accounting-sqs-consumer-runner.js"]
+#   replicas: 1
+#   leaderSafe: true
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}

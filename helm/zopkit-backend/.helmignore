@@ -1,0 +1,30 @@
+# Patterns to ignore when building Helm packages.
+# This supports shell glob matching, relative path matching, and
+# negation (prefixed with !). Only one pattern per line.
+
+# Version control directories
+.git/
+.gitignore
+.bzr/
+.bzrignore
+.hg/
+.hgignore
+.svn/
+
+# Common backup / temp / OS files
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+.DS_Store
+.idea/
+.vscode/
+
+# CI / local tooling artifacts
+ci/
+.github/
+
+# NOTE: do NOT ignore values-*.yaml — per-app override files
+# (values-wrapper.yaml, values-crm.yaml, values-fa.yaml) must ship
+# inside the chart so render-values.sh / helm -f can resolve them.

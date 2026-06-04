@@ -1,0 +1,36 @@
+{{/*
+  HorizontalPodAutoscaler for the web Deployment.
+
+  Only rendered when .Values.autoscaling.enabled is true. This MUST stay
+  DISABLED (autoscaling.enabled=false) for the leader-unsafe apps — crm and fa —
+  whose EventBridge outbox pollers/cron managers have no leader election or
+  SKIP LOCKED, so running >1 web replica double-publishes. Only wrapper
+  (pg advisory locks => leader-safe, Valkey-backed cache coherence) may scale.
+
+  Targets the Deployment created by templates/deployment.yaml (same name:
+  {{ include "zb.fullname" . }}). When enabled, the Deployment omits its static
+  replicas field and the HPA owns the replica count between min and max.
+*/}}
+{{- if .Values.autoscaling.enabled }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "zb.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "zb.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "zb.fullname" . }}
+  minReplicas: {{ .Values.autoscaling.minReplicas }}
+  maxReplicas: {{ .Values.autoscaling.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+{{- end }}

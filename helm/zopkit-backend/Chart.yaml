@@ -1,0 +1,8 @@
+apiVersion: v2
+name: zopkit-backend
+description: Generic backend chart for a Zopkit suite service (wrapper / crm / fa) on EKS — web Deployment, optional worker Deployments, ALB Ingress, HPA, IRSA ServiceAccount, and ExternalSecrets-sourced env.
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+maintainers:
+  - name: Zopkit Platform

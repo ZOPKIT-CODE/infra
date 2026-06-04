@@ -1,0 +1,50 @@
+# Wrapper backend — port 3000. LEADER-SAFE (pg advisory locks) => may scale + HPA.
+# Has a WebSocket server at /ws (pod-local registry) => ALB stickiness on.
+app: wrapper
+fullnameOverride: wrapper   # resources named "wrapper"/"wrapper-secret"/"wrapper-env"
+namespace: zopkit-prod
+port: 3000
+replicaCount: 3
+
+# image/env/serviceAccount.roleArn/externalSecret.remoteRef/ingress.host+certArn
+# are injected from `terraform output -json app_wiring` (see README).
+image:
+  repository: "REPLACED_BY_TF" # ecr_repository_urls["wrapper-backend"]
+  tag: latest
+
+serviceAccount:
+  roleArn: "REPLACED_BY_TF" # app_irsa_role_arns["wrapper"]
+
+externalSecret:
+  remoteRef:
+    key: "zopkit/prod/wrapper" # app secret in Secrets Manager
+
+probes:
+  livenessPath: /health/live
+  readinessPath: /health/ready
+
+resources:
+  requests: { cpu: 500m, memory: 768Mi }
+  limits: { memory: 1536Mi }
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+ingress:
+  enabled: true
+  host: api.zopkit.com
+  extraHosts:
+    - "*.zopkit.com"   # tenant vanity subdomains -> wrapper (wildcard, lowest priority)
+  websocket: true
+  healthcheckPath: /health/live
+  certArn: "REPLACED_BY_TF"
+
+# Optional Temporal worker (TEMPORAL_ENABLED=false by default — leave disabled).
+workers: []

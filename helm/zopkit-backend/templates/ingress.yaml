@@ -1,0 +1,70 @@
+{{- /*
+  ALB Ingress for a single Zopkit suite backend (wrapper / crm / fa).
+
+  ONE shared ALB for the whole suite: every app's Ingress carries the same
+  alb.ingress.kubernetes.io/group.name (.Values.ingress.group, default
+  "zopkit-suite"), so the AWS Load Balancer Controller merges them onto a single
+  internet-facing ALB and external-dns publishes the hostnames from the rules.
+
+  Hosts:
+    - .Values.ingress.host        -> the app's primary API FQDN (api/crm-api/accounting-api).
+    - .Values.ingress.extraHosts  -> additional hostnames; for wrapper this is the
+                                     tenant wildcard "*.zopkit.com", which MUST sort
+                                     LAST within the group (see group.order below).
+*/ -}}
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "zb.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "zb.labels" . | nindent 4 }}
+  annotations:
+    # --- Shared ALB: all suite ingresses use the same group.name => ONE ALB. ---
+    alb.ingress.kubernetes.io/group.name: {{ .Values.ingress.group | quote }}
+    {{- if .Values.ingress.websocket }}
+    # Wrapper carries the "*.zopkit.com" wildcard rule; a high group.order makes its
+    # IngressGroup member sort LAST so specific-host members (api/crm-api/...) win.
+    alb.ingress.kubernetes.io/group.order: "100"
+    {{- end }}
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    alb.ingress.kubernetes.io/certificate-arn: {{ .Values.ingress.certArn | quote }}
+    alb.ingress.kubernetes.io/healthcheck-path: {{ .Values.ingress.healthcheckPath | quote }}
+    {{- if .Values.ingress.websocket }}
+    # WebSocket (/ws) uses a pod-local connection registry => pin clients to a pod via
+    # ALB cookie stickiness, and prefer least-outstanding-requests over round-robin.
+    alb.ingress.kubernetes.io/target-group-attributes: stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=86400
+    alb.ingress.kubernetes.io/load-balancing.algorithm.type: least_outstanding_requests
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  rules:
+    # Primary API host for this app.
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "zb.fullname" . }}
+                port:
+                  number: 80
+    {{- /* Additional hosts (e.g. wrapper's "*.zopkit.com" tenant wildcard). */}}
+    {{- range .Values.ingress.extraHosts }}
+    - host: {{ . | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "zb.fullname" $ }}
+                port:
+                  number: 80
+    {{- end }}
+{{- end }}

@@ -1,0 +1,25 @@
+{{- /*
+PodDisruptionBudget for the web Deployment.
+
+Keeps a minimum number of pods Ready during voluntary disruptions (node drains,
+cluster upgrades, etc.). Gated on .Values.podDisruptionBudget.enabled so it is
+only created for apps that actually run more than one replica:
+  - wrapper: enabled, minAvailable 2 (leader-safe, scales + HPA).
+  - crm / fa: disabled — web is PINNED to replicas=1 (outbox pollers / cron
+    managers are not leader-safe), so a PDB with minAvailable >= 1 would block
+    every node drain. Keep disabled until those workloads are leader-gated.
+*/ -}}
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "zb.fullname" . }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "zb.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "zb.webSelectorLabels" . | nindent 6 }}
+{{- end }}

@@ -1,0 +1,50 @@
+# CRM backend — port 4000.
+# NOT leader-safe: crmOutboxPoller starts on every pod with no leader election and
+# getUnpublished() lacks FOR UPDATE SKIP LOCKED => N pods double-publish to
+# EventBridge. PINNED to replicaCount=1 / autoscaling off until the poller is
+# leader-gated (advisory lock) or split into a single-replica worker Deployment.
+app: crm
+fullnameOverride: crm   # resources named "crm"/"crm-secret"/"crm-env"
+namespace: zopkit-prod
+port: 4000
+replicaCount: 1
+
+image:
+  repository: "REPLACED_BY_TF" # ecr_repository_urls["crm-backend"]
+  tag: latest
+
+serviceAccount:
+  roleArn: "REPLACED_BY_TF" # app_irsa_role_arns["crm"]
+
+externalSecret:
+  remoteRef:
+    key: "zopkit/prod/crm"
+
+# CRM mounts a single /health that 503s on DB/SQS/heartbeat failure. Use it for
+# readiness; for liveness use the same path but tolerant thresholds so a transient
+# SQS blip doesn't crash-loop the only pod.
+probes:
+  livenessPath: /health
+  readinessPath: /health
+  failureThreshold: 10
+
+resources:
+  requests: { cpu: 300m, memory: 640Mi }
+  limits: { memory: 1280Mi }
+
+autoscaling:
+  enabled: false   # DO NOT enable until the outbox poller is leader-safe
+  minReplicas: 1
+  maxReplicas: 1
+
+podDisruptionBudget:
+  enabled: false
+
+ingress:
+  enabled: true
+  host: crm-api.zopkit.com
+  websocket: false
+  healthcheckPath: /health
+  certArn: "REPLACED_BY_TF"
+
+workers: []

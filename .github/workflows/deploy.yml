@@ -1,0 +1,243 @@
+# =============================================================================
+# Zopkit Suite — build + deploy to EKS
+#
+# Builds each backend image, pushes it to its ECR repo, and rolls it out to the
+# EKS cluster via Helm (chart: helm/zopkit-backend). One matrix leg per app.
+#
+# Auth: GitHub OIDC -> IAM role (no static AWS keys). The role is supplied via
+# the `AWS_DEPLOY_ROLE_ARN` repo/org secret and must trust this repo's OIDC
+# subject and be allowed to push to ECR + run `eks update-kubeconfig` + the
+# helm/kubectl actions the deploy needs (see deploy/terraform/iam_irsa.tf for the
+# pattern; the *deploy* role is operator-managed, separate from the app IRSA
+# roles). The EKS cluster name is `zopkit-prod` (module.eks cluster_name).
+#
+# IMPORTANT layout note: this workflow lives in the `wrapper` repo under
+# `deploy/`, but the crm and fa backends live in sibling repos
+# (b2b-crm, finance-accounting). Each matrix leg therefore checks out BOTH this
+# repo (for the Helm chart + values) and the app's own source repo (for the
+# Dockerfile/build context). For a local monorepo checkout the source dirs are
+# wrapper=../backend, crm=../../b2b-crm/server, fa=../../finance-accounting — see
+# README.md "Build & push images". Adjust `source_repo` below to your org paths.
+# =============================================================================
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      apps:
+        description: "Comma-separated apps to deploy (default: all). e.g. wrapper,crm"
+        required: false
+        default: "wrapper,crm,fa"
+  push:
+    branches: [main]
+    # Only run on changes to the IaC/chart or this workflow. App-source changes
+    # in the sibling repos trigger their own deploys (workflow_dispatch here, or
+    # a repository_dispatch from those repos).
+    paths:
+      - "deploy/helm/**"
+      - "deploy/terraform/**"
+      - "deploy/.github/workflows/deploy.yml"
+      - "deploy/scripts/**"
+
+# Tokens needed for OIDC federation (id-token) + repo checkout (contents).
+permissions:
+  id-token: write
+  contents: read
+
+# Never run two deploys against prod at once; let an in-flight rollout finish.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-east-1            # var.aws_region (default region; ECR + EKS live here)
+  EKS_CLUSTER_NAME: zopkit-prod    # module.eks cluster_name (local.name_prefix)
+  K8S_NAMESPACE: zopkit-prod       # local.namespace
+  HELM_CHART_DIR: deploy/helm/zopkit-backend
+
+jobs:
+  deploy:
+    name: deploy ${{ matrix.app }}
+    runs-on: ubuntu-latest
+    # Prod environment gate: configure required reviewers / branch protection on
+    # the "production" environment in repo settings for a manual approval step.
+    environment: production
+    strategy:
+      # Apps are independent; don't abort the others if one fails.
+      fail-fast: false
+      matrix:
+        include:
+          - app: wrapper
+            ecr_repo: wrapper-backend
+            # Source repo for the Dockerfile/build context. PLACEHOLDER: set to
+            # your org's repo. wrapper backend lives in THIS repo under ./backend.
+            source_repo: ""                       # "" => use this repo's checkout
+            source_ref: main
+            context: backend
+            dockerfile: backend/Dockerfile
+            # Leader-safe (pg advisory locks): HPA is allowed to stay on; do NOT
+            # override autoscaling here (values-wrapper.yaml enables it).
+            autoscaling_safe: "true"
+          - app: crm
+            ecr_repo: crm-backend
+            source_repo: my-org/b2b-crm           # PLACEHOLDER: your b2b-crm repo
+            source_ref: main
+            context: server                       # b2b-crm/server
+            dockerfile: server/Dockerfile
+            # NOT leader-safe (crmOutboxPoller, no leader election) => HPA MUST
+            # stay off; we force autoscaling.enabled=false below.
+            autoscaling_safe: "false"
+          - app: fa
+            ecr_repo: fa-backend
+            source_repo: my-org/finance-accounting # PLACEHOLDER: your fa repo
+            source_ref: main
+            context: .                            # finance-accounting root
+            dockerfile: Dockerfile
+            # NOT leader-safe (faOutboxPoller + cron managers) => HPA MUST stay
+            # off; we force autoscaling.enabled=false below.
+            autoscaling_safe: "false"
+
+    steps:
+      # 1) This repo: provides the Helm chart + per-app values + scripts.
+      - name: Checkout deploy repo (chart + values)
+        uses: actions/checkout@v4
+        with:
+          path: deploy-repo
+
+      # 2) App source: the Dockerfile + build context. When source_repo is empty
+      #    (wrapper) the build context comes from the deploy-repo checkout's
+      #    sibling layout; otherwise check out the app's own repo at app-src/.
+      - name: Checkout app source
+        if: matrix.source_repo != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.source_repo }}
+          ref: ${{ matrix.source_ref }}
+          path: app-src
+          # A cross-repo checkout needs a token with read access to that repo.
+          # Use a PAT/app token if the repo is private:
+          #   token: ${{ secrets.SUITE_SOURCE_PAT }}
+
+      # Resolve the build context + Dockerfile path depending on which checkout
+      # holds the source. For wrapper (no source_repo) the backend lives next to
+      # the deploy/ dir, i.e. ../backend relative to deploy-repo/deploy.
+      - name: Resolve build paths
+        id: paths
+        run: |
+          set -euo pipefail
+          if [ -n "${{ matrix.source_repo }}" ]; then
+            BUILD_CONTEXT="app-src/${{ matrix.context }}"
+            DOCKERFILE="app-src/${{ matrix.dockerfile }}"
+          else
+            # wrapper backend ships inside this repo at ./backend
+            BUILD_CONTEXT="deploy-repo/${{ matrix.context }}"
+            DOCKERFILE="deploy-repo/${{ matrix.dockerfile }}"
+          fi
+          # Normalize the './' context for fa
+          BUILD_CONTEXT="${BUILD_CONTEXT%/.}"
+          echo "context=${BUILD_CONTEXT}" >> "$GITHUB_OUTPUT"
+          echo "dockerfile=${DOCKERFILE}" >> "$GITHUB_OUTPUT"
+          test -f "${DOCKERFILE}" || { echo "::error::Dockerfile not found at ${DOCKERFILE}"; exit 1; }
+
+      # 3) AWS auth via OIDC — assumes the operator-managed deploy role.
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}  # PLACEHOLDER secret
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-deploy-${{ matrix.app }}-${{ github.run_id }}
+
+      # 4) ECR login (sets the registry for the build/push below).
+      - name: Login to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # 5) Build + push the image, tagged with the commit SHA (immutable) and a
+      #    moving `latest` for convenience. ECR repos are IMMUTABLE per-tag, so
+      #    the SHA tag is the source of truth; `latest` is overwrite-allowed only
+      #    if the repo policy permits — if your repo enforces immutability for
+      #    ALL tags, drop the `latest` tag line.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.paths.outputs.context }}
+          file: ${{ steps.paths.outputs.dockerfile }}
+          push: true
+          provenance: false
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/${{ matrix.ecr_repo }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.app }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.app }}
+
+      # 6) Cluster access for Helm/kubectl.
+      - name: Update kubeconfig
+        run: |
+          set -euo pipefail
+          aws eks update-kubeconfig \
+            --name "${EKS_CLUSTER_NAME}" \
+            --region "${AWS_REGION}"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.15.4
+
+      # 7a) Render the TF-derived wiring into values-<app>.generated.yaml. The base
+      #     values file carries placeholders (serviceAccount.roleArn, ingress.certArn,
+      #     env={}, externalSecret keys) that are LOAD-BEARING — deploying the base file
+      #     unrendered yields an invalid IRSA annotation, an invalid ALB cert-arn, and an
+      #     empty ConfigMap, so the rollout would fail. We MUST render against terraform
+      #     outputs. This needs the Terraform remote state/outputs reachable by the deploy
+      #     role (configure the backend in versions.tf and grant state read).
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.5"
+          terraform_wrapper: false
+
+      - name: Render Helm values from terraform outputs
+        run: |
+          set -euo pipefail
+          ( cd deploy-repo/deploy/terraform && terraform init -input=false )
+          deploy-repo/deploy/scripts/render-values.sh "${{ matrix.app }}" "${GITHUB_SHA}"
+          test -f "deploy-repo/${HELM_CHART_DIR}/values-${{ matrix.app }}.generated.yaml" \
+            || { echo "::error::render-values.sh did not produce a generated values file"; exit 1; }
+
+      # 7b) Roll out via Helm using the RENDERED values + this build's image SHA.
+      #     autoscaling: only wrapper (leader-safe) keeps HPA. For crm/fa we HARD-FORCE
+      #     autoscaling.enabled=false + replicaCount=1 so a stray edit can never scale a
+      #     leader-unsafe outbox poller. crm/fa are NEVER passed autoscaling.enabled=true.
+      - name: Helm upgrade --install ${{ matrix.app }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${{ steps.ecr.outputs.registry }}"
+          IMAGE_REPO="${REGISTRY}/${{ matrix.ecr_repo }}"
+          VALUES_FILE="${HELM_CHART_DIR}/values-${{ matrix.app }}.generated.yaml"
+          test -f "deploy-repo/${VALUES_FILE}" || { echo "::error::rendered values not found: ${VALUES_FILE}"; exit 1; }
+
+          EXTRA_ARGS=()
+          if [ "${{ matrix.autoscaling_safe }}" != "true" ]; then
+            # Leader-unsafe (crm, fa): pin to a single web replica + HPA OFF.
+            EXTRA_ARGS+=( --set autoscaling.enabled=false --set replicaCount=1 )
+          fi
+
+          helm upgrade --install "${{ matrix.app }}" \
+            "deploy-repo/${HELM_CHART_DIR}" \
+            --namespace "${K8S_NAMESPACE}" \
+            --create-namespace \
+            -f "deploy-repo/${VALUES_FILE}" \
+            --set image.repository="${IMAGE_REPO}" \
+            --set image.tag="${GITHUB_SHA}" \
+            "${EXTRA_ARGS[@]}" \
+            --atomic \
+            --wait \
+            --timeout 10m
+
+      - name: Rollout status
+        run: |
+          set -euo pipefail
+          kubectl -n "${K8S_NAMESPACE}" rollout status \
+            "deployment/${{ matrix.app }}" --timeout=300s

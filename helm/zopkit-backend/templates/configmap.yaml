@@ -1,0 +1,19 @@
+{{/*
+  Non-secret environment for the app, mounted into the web Deployment (and the
+  worker Deployments) via `envFrom: configMapRef: {{ include "zb.fullname" . }}-env`.
+  Populated from `terraform output -json app_wiring`.<app>.env at render time
+  (see scripts/render-values.sh). Secrets live separately in the ExternalSecret
+  target ({{ include "zb.fullname" . }}-secret) — never put secrets here.
+  Always created so the Deployment's configMapRef always resolves, even empty.
+*/}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "zb.fullname" . }}-env
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "zb.labels" . | nindent 4 }}
+data:
+  {{- range $k, $v := .Values.env }}
+  {{ $k }}: {{ $v | toString | quote }}
+  {{- end }}

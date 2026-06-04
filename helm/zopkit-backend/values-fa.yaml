@@ -1,0 +1,68 @@
+# Finance-Accounting backend — port 3002 (NOT 5000).
+# NOT leader-safe: faOutboxPoller + several setInterval cron managers
+# (subscriptionExpiry, creditExpiry, sync monitors, prune jobs) run on every web
+# pod with no leader election => duplicate publishes/sweeps under scale-out.
+# PINNED to replicaCount=1 / autoscaling off until those are leader-gated.
+#
+# The SQS consumer is a SEPARATE process (idempotent, safe to scale) deployed as
+# its own worker below. Temporal workers are separate too (enable when Temporal
+# is provisioned — FA's aggregate /api/health/health hard-requires Temporal).
+app: fa
+fullnameOverride: fa   # resources named "fa"/"fa-secret"/"fa-env"; worker "fa-consumer"
+namespace: zopkit-prod
+port: 3002
+replicaCount: 1
+
+image:
+  repository: "REPLACED_BY_TF" # ecr_repository_urls["fa-backend"]
+  tag: latest
+
+serviceAccount:
+  roleArn: "REPLACED_BY_TF" # app_irsa_role_arns["fa"]
+
+externalSecret:
+  remoteRef:
+    key: "zopkit/prod/fa"
+
+# FA Dockerfile HEALTHCHECK is broken (/health 404s). Real routes:
+#   liveness  -> /api/health/health/live
+#   readiness -> /api/health/health/ready
+# Do NOT use the aggregate /api/health/health for liveness (couples to Temporal + the
+# separate consumer's heartbeat).
+probes:
+  livenessPath: /api/health/health/live
+  readinessPath: /api/health/health/ready
+  failureThreshold: 10
+
+resources:
+  requests: { cpu: 300m, memory: 640Mi }
+  limits: { memory: 1280Mi }
+
+autoscaling:
+  enabled: false   # DO NOT enable until outbox poller + cron managers are leader-safe
+  minReplicas: 1
+  maxReplicas: 1
+
+ingress:
+  enabled: true
+  host: accounting-api.zopkit.com
+  websocket: false
+  healthcheckPath: /api/health/health/live
+  certArn: "REPLACED_BY_TF"
+
+# Separate long-running processes (own Deployments). The SQS consumer is
+# idempotent (processed_mq_events) so it MAY run >1 replica; keep 1 to start.
+workers:
+  - name: consumer
+    command: ["node", "dist/scripts/accounting-sqs-consumer-runner.js"]
+    replicas: 1
+    leaderSafe: true   # idempotent via processed_mq_events; owns the 'sqs-accounting' heartbeat
+  # Enable these only once Temporal (Cloud/self-hosted) is provisioned + creds set:
+  # - name: temporal-worker
+  #   command: ["node", "dist/scripts/fa-worker.js"]
+  #   replicas: 1
+  #   leaderSafe: true
+  # - name: orchestration-worker
+  #   command: ["node", "dist/scripts/orchestration-worker.js"]
+  #   replicas: 1
+  #   leaderSafe: true
