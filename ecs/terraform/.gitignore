@@ -1,0 +1,13 @@
+# Terraform state can contain SECRETS (e.g. the Valkey auth token) — never commit.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Provider plugins / lock dir and saved plans.
+.terraform/
+*.tfplan
+tf.plan
+crash.log
+
+# Local var files may carry environment specifics; keep the committed tfvars only.
+*.auto.tfvars.json
