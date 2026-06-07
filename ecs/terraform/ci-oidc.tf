@@ -13,7 +13,21 @@ variable "github_deploy_repos" {
   ]
 }
 
+variable "enable_ci_oidc" {
+  description = <<-EOT
+    Manage the GitHub Actions OIDC provider + deploy role in THIS environment.
+    The OIDC provider is an account-wide singleton, so exactly ONE environment may
+    own it — keep true for the primary (staging/default) env and false elsewhere
+    (e.g. prod) so a `terraform destroy` of a secondary env can never delete the
+    shared CI principal. A secondary env that later needs its own deploy role can
+    add a role that references the existing provider via a data source.
+  EOT
+  type        = bool
+  default     = true
+}
+
 resource "aws_iam_openid_connect_provider" "github" {
+  count           = var.enable_ci_oidc ? 1 : 0
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1", "1c58a3a8518e8759bf075b76b750d4f2df264fcd"]
@@ -21,12 +35,13 @@ resource "aws_iam_openid_connect_provider" "github" {
 }
 
 data "aws_iam_policy_document" "github_deploy_trust" {
+  count = var.enable_ci_oidc ? 1 : 0
   statement {
     effect  = "Allow"
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [aws_iam_openid_connect_provider.github[0].arn]
     }
     condition {
       test     = "StringEquals"
@@ -42,8 +57,9 @@ data "aws_iam_policy_document" "github_deploy_trust" {
 }
 
 resource "aws_iam_role" "github_deploy" {
+  count              = var.enable_ci_oidc ? 1 : 0
   name               = "${local.name_prefix}-github-deploy"
-  assume_role_policy = data.aws_iam_policy_document.github_deploy_trust.json
+  assume_role_policy = data.aws_iam_policy_document.github_deploy_trust[0].json
   tags               = local.common_tags
 }
 
@@ -112,12 +128,13 @@ data "aws_iam_policy_document" "github_deploy" {
 }
 
 resource "aws_iam_role_policy" "github_deploy" {
+  count  = var.enable_ci_oidc ? 1 : 0
   name   = "deploy"
-  role   = aws_iam_role.github_deploy.id
+  role   = aws_iam_role.github_deploy[0].id
   policy = data.aws_iam_policy_document.github_deploy.json
 }
 
 output "github_deploy_role_arn" {
-  description = "ARN to put in each repo's GitHub Actions workflow (role-to-assume)."
-  value       = aws_iam_role.github_deploy.arn
+  description = "ARN to put in each repo's GitHub Actions workflow (role-to-assume). Null in envs with enable_ci_oidc=false."
+  value       = one(aws_iam_role.github_deploy[*].arn)
 }

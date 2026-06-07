@@ -22,7 +22,7 @@ single_nat_gateway       = true # ignored when fargate_assign_public_ip=true (no
 # alarm_email = ""   # set to route DLQ / ops alarms to an inbox
 
 # Reuse the shared zopkit-platform Cognito pool (Google federation + clients already set up)
-cognito_user_pool_id  = "us-east-1_6e8AY4eMj"
+cognito_user_pool_id           = "us-east-1_6e8AY4eMj"
 cognito_existing_domain_prefix = "zopkit-platform-ay4emj"
 cognito_client_ids = {
   wrapper = "744sfndqk37c2eeq55k2c0oe10"

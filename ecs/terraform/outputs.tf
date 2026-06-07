@@ -39,7 +39,7 @@ output "alb_zone_id" {
 # --- Container registry ---
 output "ecr_repository_urls" {
   description = "ECR repo URLs keyed by repo name."
-  value       = { for k, r in aws_ecr_repository.repos : k => r.repository_url }
+  value       = local.ecr_repo_urls
 }
 
 # --- Messaging ---

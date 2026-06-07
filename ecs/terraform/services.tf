@@ -35,7 +35,7 @@ module "services" {
   # --- Task definition ---
   # Per-service tag override (service_image_tags["wrapper-web"] = "<sha>") falls
   # back to the global var.image_tag — lets you roll out one app at a time.
-  image  = "${aws_ecr_repository.repos[each.value.ecr_repo].repository_url}:${lookup(var.service_image_tags, each.key, var.image_tag)}"
+  image  = "${local.ecr_repo_urls[each.value.ecr_repo]}:${lookup(var.service_image_tags, each.key, var.image_tag)}"
   cpu    = each.value.cpu
   memory = each.value.memory
 

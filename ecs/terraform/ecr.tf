@@ -5,9 +5,29 @@
 # yielding exactly: "wrapper-backend", "crm-backend", "fa-backend".
 # outputs.tf consumes aws_ecr_repository.repos[<reponame>].repository_url.
 
+# ECR repos are NOT env-prefixed (image names are shared across environments), so
+# exactly ONE workspace creates them; others reference them. Toggle with manage_ecr.
+variable "manage_ecr" {
+  description = "Create the shared ECR repositories (true) or look them up (false). One env owns them; secondary envs (e.g. prod) reference the same images."
+  type        = bool
+  default     = true
+}
+
+locals {
+  ecr_repo_names = toset(distinct([for a in local.apps : a.ecr_repo]))
+  # Resolve repo URLs from whichever source is active, so consumers don't branch.
+  ecr_repo_urls = var.manage_ecr ? { for k, r in aws_ecr_repository.repos : k => r.repository_url } : { for k, r in data.aws_ecr_repository.repos : k => r.repository_url }
+}
+
+# Look up the shared repos when this env doesn't manage them.
+data "aws_ecr_repository" "repos" {
+  for_each = var.manage_ecr ? [] : local.ecr_repo_names
+  name     = each.key
+}
+
 # One immutable, scan-on-push, AES256-encrypted repository per distinct app image.
 resource "aws_ecr_repository" "repos" {
-  for_each = toset(distinct([for a in local.apps : a.ecr_repo]))
+  for_each = var.manage_ecr ? local.ecr_repo_names : []
 
   name                 = each.key
   image_tag_mutability = "IMMUTABLE"

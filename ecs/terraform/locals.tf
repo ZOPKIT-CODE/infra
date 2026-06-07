@@ -185,6 +185,14 @@ locals {
     }
   }
 
+  # An app is "live" when its <app>-web service is enabled (i.e. it has a prod
+  # backend + frontend). When dns_only_live_apps=true, the apex DNS records are
+  # created ONLY for live apps, so a partial-rollout env (e.g. prod with only
+  # wrapper deployed) never points crm./accounting. records at empty resources or
+  # clobbers another app's existing DNS. Default false preserves all-apps behavior.
+  live_apps      = var.dns_only_live_apps ? { for k, v in local.apps : k => v if try(local.services["${k}-web"].enabled, false) } : local.apps
+  live_frontends = var.dns_only_live_apps ? { for k, v in local.frontends : k => v if try(local.services["${k}-web"].enabled, false) } : local.frontends
+
   # Route53 + ACM are defined in route53_acm.tf. These locals pin the addresses
   # so the rest of the stack can reference them regardless of create-vs-lookup.
   #   aws_route53_zone.this   (count = var.create_route53_zone ? 1 : 0)

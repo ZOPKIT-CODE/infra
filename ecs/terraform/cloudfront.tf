@@ -35,8 +35,12 @@ resource "aws_cloudfront_distribution" "frontends" {
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
 
-  # Custom domain served by this distribution.
-  aliases = ["${each.value.subdomain}.${var.root_domain}"]
+  # Custom domain served by this distribution. The app named in apex_frontend_app
+  # also serves the bare apex (root_domain) — the cloudfront cert SANs cover it.
+  aliases = concat(
+    ["${each.value.subdomain}.${var.root_domain}"],
+    var.apex_frontend_app == each.key ? [var.root_domain] : [],
+  )
 
   # Private S3 bucket origin, reached through the OAC above.
   origin {

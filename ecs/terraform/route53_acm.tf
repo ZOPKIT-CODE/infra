@@ -141,14 +141,39 @@ resource "aws_acm_certificate_validation" "cloudfront" {
 # Z2FDTNDATAQYW2 is the global, well-known CloudFront alias hosted-zone ID.
 
 resource "aws_route53_record" "frontend" {
-  for_each = local.frontends
+  # Gated by manage_apex_dns: empty map = no live records (build/validate first).
+  # live_frontends filters to apps with a prod backend when dns_only_live_apps=true.
+  for_each = var.manage_apex_dns ? local.live_frontends : {}
 
   zone_id = local.route53_zone_id
   name    = "${each.value.subdomain}.${var.root_domain}"
   type    = "A"
+  # Overwrite any pre-existing record (e.g. a legacy box's A-record) on cutover.
+  allow_overwrite = true
 
   alias {
     name                   = aws_cloudfront_distribution.frontends[each.key].domain_name
+    zone_id                = "Z2FDTNDATAQYW2"
+    evaluate_target_health = false
+  }
+}
+
+############################################
+# Apex frontend — root domain -> one app's CloudFront
+############################################
+# When apex_frontend_app is set (e.g. "wrapper"), the bare apex (zopkit.com) also
+# aliases that app's CloudFront distribution, so the root domain serves the SPA in
+# addition to <subdomain>.<root>. The cloudfront cert SANs cover the apex already.
+resource "aws_route53_record" "apex_frontend" {
+  count = var.manage_apex_dns && var.apex_frontend_app != "" ? 1 : 0
+
+  zone_id         = local.route53_zone_id
+  name            = var.root_domain
+  type            = "A"
+  allow_overwrite = true
+
+  alias {
+    name                   = aws_cloudfront_distribution.frontends[var.apex_frontend_app].domain_name
     zone_id                = "Z2FDTNDATAQYW2"
     evaluate_target_health = false
   }
@@ -164,11 +189,14 @@ resource "aws_route53_record" "frontend" {
 # route each host to the correct target group.
 
 resource "aws_route53_record" "api" {
-  for_each = local.apps # wrapper | crm | fa
+  # Gated by manage_apex_dns (see frontend record above). live_apps filters to
+  # apps with a prod backend when dns_only_live_apps=true.
+  for_each = var.manage_apex_dns ? local.live_apps : {} # wrapper | crm | fa
 
-  zone_id = local.route53_zone_id
-  name    = local.fqdn[each.key].api # api / crm-api / accounting-api .<root>
-  type    = "A"
+  zone_id         = local.route53_zone_id
+  name            = local.fqdn[each.key].api # api / crm-api / accounting-api .<root>
+  type            = "A"
+  allow_overwrite = true
 
   alias {
     name                   = aws_lb.this.dns_name
@@ -186,9 +214,14 @@ resource "aws_route53_record" "api" {
 # group, so all tenant vanity subdomains reach wrapper.
 
 resource "aws_route53_record" "tenant_wildcard" {
-  zone_id = local.route53_zone_id
-  name    = "*.${var.root_domain}"
-  type    = "A"
+  # Gated by manage_apex_dns (see frontend record above). count, not for_each,
+  # since this is a single record — staging state was migrated to [0] accordingly.
+  count = var.manage_apex_dns ? 1 : 0
+
+  zone_id         = local.route53_zone_id
+  name            = "*.${var.root_domain}"
+  type            = "A"
+  allow_overwrite = true
 
   alias {
     name                   = aws_lb.this.dns_name

@@ -36,6 +36,32 @@ variable "root_domain" {
   default     = "zopkit.com"
 }
 
+variable "dns_only_live_apps" {
+  description = "Create apex frontend/api DNS records only for apps whose <app>-web service is enabled. Use in partial-rollout envs (e.g. prod with only wrapper live) so crm./accounting. records aren't pointed at empty resources or made to clobber another stack's DNS. Default false = records for all apps (prior behavior)."
+  type        = bool
+  default     = false
+}
+
+variable "apex_frontend_app" {
+  description = "App key (e.g. \"wrapper\") whose CloudFront distribution ALSO serves the bare apex root_domain, plus an apex A-alias record. Empty = no app serves the apex. The cloudfront ACM cert already covers the apex (it SANs root_domain + *.root_domain)."
+  type        = string
+  default     = ""
+}
+
+variable "manage_apex_dns" {
+  description = <<-EOT
+    Whether to create the live apex A-records (app/api/<root> + the *.<root> tenant
+    wildcard) that point real traffic at this env's CloudFront/ALB. Set false to
+    stand up an environment WITHOUT touching DNS (build + validate first), then set
+    true to perform the cutover. ACM-validation CNAMEs are always managed (they only
+    add validation records, never move traffic). Default true preserves prior
+    single-env behavior. The apex records carry allow_overwrite=true so the cutover
+    safely replaces any pre-existing records (e.g. a legacy box's A-records).
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "create_route53_zone" {
   description = "Create the Route53 public hosted zone (true) or look up an existing one (false)."
   type        = bool
