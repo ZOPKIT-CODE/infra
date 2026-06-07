@@ -25,13 +25,12 @@ terraform {
     }
   }
 
-  # Remote state is strongly recommended for a shared platform stack.
-  # Fill in and uncomment, then `terraform init -migrate-state`.
-  # backend "s3" {
-  #   bucket         = "zopkit-tfstate-<ACCOUNT_ID>"
-  #   key            = "suite-ecs/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   dynamodb_table = "zopkit-tflock"
-  #   encrypt        = true
-  # }
+  # Remote state (required for CI/CD — runners can't share a local state file).
+  backend "s3" {
+    bucket       = "zopkit-tfstate-207567767101"
+    key          = "suite-ecs/terraform.tfstate"
+    region       = "us-east-1"
+    encrypt      = true
+    use_lockfile = true # S3-native state locking (Terraform >= 1.10); no DynamoDB
+  }
 }

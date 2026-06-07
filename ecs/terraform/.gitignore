@@ -11,3 +11,6 @@ crash.log
 
 # Local var files may carry environment specifics; keep the committed tfvars only.
 *.auto.tfvars.json
+# EXCEPT the deployed-image-tag record — it's the source of truth for what's live
+# (CI commits it back after each deploy; needed so a full `terraform apply` is safe).
+!image-tags.auto.tfvars.json
