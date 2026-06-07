@@ -95,6 +95,9 @@ data "aws_iam_policy_document" "wrapper" {
     resources = concat(
       [for k in ["claim_check", "wrapper_logos"] : aws_s3_bucket.buckets[k].arn],
       [for k in ["claim_check", "wrapper_logos"] : "${aws_s3_bucket.buckets[k].arn}/*"],
+      # When reusing an existing logo bucket (staging points at the shared dev
+      # bucket so blog/logo images referenced by the shared dev DB resolve).
+      var.logo_bucket_override != "" ? ["arn:aws:s3:::${var.logo_bucket_override}", "arn:aws:s3:::${var.logo_bucket_override}/*"] : [],
     )
   }
 

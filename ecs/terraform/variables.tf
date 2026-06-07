@@ -143,3 +143,36 @@ variable "enable_ses_inbound" {
   type        = bool
   default     = false
 }
+
+# --- Cognito: reuse an existing shared pool (Google federation already configured) ---
+variable "cognito_user_pool_id" {
+  description = "Existing Cognito user pool id to reuse (e.g. the shared zopkit-platform pool). Empty = create+use this stack's own pool."
+  type        = string
+  default     = ""
+}
+
+variable "cognito_existing_domain_prefix" {
+  description = "Domain PREFIX of the EXISTING pool being reused (e.g. zopkit-platform-ay4emj). Empty = use this stack's created domain."
+  type        = string
+  default     = ""
+}
+
+variable "cognito_client_ids" {
+  description = "Per-app app-client id override, keyed by app (wrapper|crm|fa). Missing app falls back to this stack's created client."
+  type        = map(string)
+  default     = {}
+}
+
+# --- Staging convenience: skip trial/credit restrictions (like local dev) ---
+variable "bypass_trial_restrictions" {
+  description = "When true, sets BYPASS_TRIAL_RESTRICTIONS=true so the credit/trial gate is skipped (staging/test). Keep false for prod."
+  type        = bool
+  default     = false
+}
+
+# --- Reuse an existing logo/blog-media S3 bucket (staging -> shared dev bucket) ---
+variable "logo_bucket_override" {
+  description = "Existing S3 bucket for logos/blog media to use instead of this stack's created one (so images referenced by a shared DB resolve). Empty = use the created bucket."
+  type        = string
+  default     = ""
+}

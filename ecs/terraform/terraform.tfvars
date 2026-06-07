@@ -20,3 +20,18 @@ single_nat_gateway       = true # ignored when fargate_assign_public_ip=true (no
 # image_tag stays "latest" until the first push; deploy-service.sh sets immutable
 # per-service SHA tags via image-tags.auto.tfvars.json.
 # alarm_email = ""   # set to route DLQ / ops alarms to an inbox
+
+# Reuse the shared zopkit-platform Cognito pool (Google federation + clients already set up)
+cognito_user_pool_id  = "us-east-1_6e8AY4eMj"
+cognito_existing_domain_prefix = "zopkit-platform-ay4emj"
+cognito_client_ids = {
+  wrapper = "744sfndqk37c2eeq55k2c0oe10"
+  crm     = "shhqqu2i3ali7vccmd9gipcac"
+  fa      = "lu29k9dvm7vn69qggvklt51ka"
+}
+
+# Staging: skip the credit/trial gate so the app is usable (the dev tenant has 0 credits)
+bypass_trial_restrictions = true
+
+# Reuse the shared dev logo/blog-media bucket (matches the shared dev DB image keys)
+logo_bucket_override = "wrapper-tenant-logos"

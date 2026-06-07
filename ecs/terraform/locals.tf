@@ -199,15 +199,22 @@ locals {
   # outputs.tf app_wiring.env, resolved to ECS terms. fa-consumer reuses the fa
   # env (same `app` key). All values are strings.
   # ----------------------------------------------------------------------------
+  # Cognito: reuse an EXISTING shared pool (with Google federation etc. already
+  # configured) when overrides are set; otherwise fall back to the pool this stack
+  # creates. Per-app client id via var.cognito_client_ids[app].
+  cognito_pool_id     = var.cognito_user_pool_id != "" ? var.cognito_user_pool_id : aws_cognito_user_pool.this.id
+  cognito_domain_name = var.cognito_existing_domain_prefix != "" ? var.cognito_existing_domain_prefix : aws_cognito_user_pool_domain.this.domain
+
   service_env_common = {
     for app, cfg in local.apps : app => {
       NODE_ENV                    = "production"
+      BYPASS_TRIAL_RESTRICTIONS   = tostring(var.bypass_trial_restrictions)
       AWS_REGION                  = var.aws_region
       COGNITO_REGION              = var.aws_region
-      COGNITO_USER_POOL_ID        = aws_cognito_user_pool.this.id
-      COGNITO_CLIENT_ID           = aws_cognito_user_pool_client.clients[app].id
-      COGNITO_ISSUER_URL          = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.this.id}"
-      COGNITO_DOMAIN              = "https://${aws_cognito_user_pool_domain.this.domain}.auth.${var.aws_region}.amazoncognito.com"
+      COGNITO_USER_POOL_ID        = local.cognito_pool_id
+      COGNITO_CLIENT_ID           = lookup(var.cognito_client_ids, app, aws_cognito_user_pool_client.clients[app].id)
+      COGNITO_ISSUER_URL          = "https://cognito-idp.${var.aws_region}.amazonaws.com/${local.cognito_pool_id}"
+      COGNITO_DOMAIN              = "https://${local.cognito_domain_name}.auth.${var.aws_region}.amazoncognito.com"
       BASE_DOMAIN                 = var.root_domain
       REDIS_ENABLED               = "true"
       BACKEND_URL                 = "https://${local.fqdn[app].api}"
@@ -229,7 +236,7 @@ locals {
       SQS_NOTIFICATIONS_BULK_URL      = aws_sqs_queue.main["notifications_bulk"].url
       SQS_NOTIFICATIONS_SCHEDULED_URL = aws_sqs_queue.main["notifications_scheduled"].url
       SNS_LARGE_PAYLOAD_BUCKET        = aws_s3_bucket.buckets["claim_check"].id
-      S3_LOGO_BUCKET                  = aws_s3_bucket.buckets["wrapper_logos"].id
+      S3_LOGO_BUCKET                  = var.logo_bucket_override != "" ? var.logo_bucket_override : aws_s3_bucket.buckets["wrapper_logos"].id
       CRM_APP_URL                     = "https://${local.fqdn["crm"].frontend}"
       ACCOUNTING_APP_URL              = "https://${local.fqdn["fa"].frontend}"
     })
