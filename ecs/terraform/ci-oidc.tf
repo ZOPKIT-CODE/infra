@@ -54,7 +54,7 @@ data "aws_iam_policy_document" "github_deploy" {
   statement {
     sid       = "EcrPushPull"
     effect    = "Allow"
-    actions   = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage", "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:DescribeRepositories", "ecr:DescribeImages", "ecr:ListImages"]
+    actions   = ["ecr:GetAuthorizationToken", "ecr:BatchCheckLayerAvailability", "ecr:GetDownloadUrlForLayer", "ecr:BatchGetImage", "ecr:PutImage", "ecr:InitiateLayerUpload", "ecr:UploadLayerPart", "ecr:CompleteLayerUpload", "ecr:DescribeRepositories", "ecr:DescribeImages", "ecr:ListImages", "ecr:ListTagsForResource"]
     resources = ["*"]
   }
   statement {
@@ -102,7 +102,10 @@ data "aws_iam_policy_document" "github_deploy" {
       "sns:Get*", "sns:List*", "sqs:Get*", "sqs:List*", "route53:Get*", "route53:List*",
       "cognito-idp:Describe*", "cognito-idp:Get*", "cognito-idp:List*", "elasticache:Describe*", "elasticache:List*",
       "acm:Describe*", "acm:List*", "secretsmanager:DescribeSecret", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecret*",
-      "s3:GetBucket*", "s3:GetEncryptionConfiguration", "s3:GetLifecycleConfiguration", "s3:GetReplicationConfiguration", "s3:ListAllMyBuckets",
+      # S3 read-only: terraform refresh reads ~12 per-bucket sub-configs (accelerate, cors,
+      # website, logging, acl, object-lock, public-access-block, tagging, …) whose IAM action
+      # names are NOT all under s3:GetBucket* — grant the read verbs broadly to avoid whack-a-mole.
+      "s3:Get*", "s3:List*",
     ]
     resources = ["*"]
   }
