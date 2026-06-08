@@ -69,8 +69,32 @@ jobs:
 > migrate command + health URL for that service, and the Dockerfile path above (the
 > CRM/FA entries were templated, not yet validated against those repos).
 
+## Full infra apply (`infra-apply.yml`)
+`deploy.yml` only does `terraform apply -target=module.services[...]` — it updates the
+ECS service/task-def and **nothing else** (not iam.tf, buckets, SNS/SQS, ALB, Cognito,
+Valkey). So a non-service change (e.g. a new task-role S3 grant) **silently drifts**
+until a FULL apply runs. `infra-apply.yml` IS that full apply.
+
+- **Run it:** Actions → **infra-apply** → Run workflow → pick `environment`
+  (staging/prod) + `mode` (`plan` to review, `apply` to change). Always `plan` first.
+- **When:** after ANY change to `deploy/ecs/terraform/**` that isn't purely an image
+  bump (IAM/task-roles, buckets, ALB rules, Cognito, SNS/SQS, Valkey, DNS…).
+- **Role:** uses a dedicated, broader role **`zopkit-infra-apply`** (NOT the everyday
+  least-privilege deploy role), assumable ONLY from the `infra-staging` / `infra-prod`
+  GitHub environments. IAM writes are scoped to `zopkit-*` principals.
+- **Workspaces/var-files:** staging → `default` workspace (auto `terraform.tfvars`);
+  prod → `prod` workspace + `-var-file=terraform.prod.tfvars`.
+
+### One-time GitHub setup (required before first run)
+Repo → **Settings → Environments** → create **`infra-staging`** and **`infra-prod`**
+(referencing them in the workflow auto-creates them on first run, unprotected). Then on
+**`infra-prod`** add **Required reviewers** (and optionally a wait timer) so every prod
+infra apply pauses for human approval. `infra-staging` can stay unprotected for fast
+iteration. (The role's OIDC trust already restricts it to `environment:infra-*`.)
+
 ## Notes / hardening later
-- This deploys to **staging** (the only env so far). For prod, add an `environment:`
-  with required reviewers (manual approval gate) + a separate role/state key.
-- The OIDC role is broad-on-read (terraform refresh) / scoped-on-write. Tighten if needed.
+- `deploy.yml` deploys to **staging** (default branch → staging). For prod app deploys,
+  add a `production` environment gate + run prod via the `prod` workspace.
+- The deploy OIDC role is broad-on-read / scoped-on-write; the infra role is broad-write
+  but env-gated. Tighten further if needed.
 - Frontend deploy is wired for the wrapper SPA only; add CRM/FA SPA steps the same way.

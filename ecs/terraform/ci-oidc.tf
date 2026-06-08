@@ -138,3 +138,93 @@ output "github_deploy_role_arn" {
   description = "ARN to put in each repo's GitHub Actions workflow (role-to-assume). Null in envs with enable_ci_oidc=false."
   value       = one(aws_iam_role.github_deploy[*].arn)
 }
+
+# ---------------------------------------------------------------------------
+# Infra-apply role — for the FULL `terraform apply` workflow (infra-apply.yml).
+#
+# The everyday deploy role above is least-privilege (ECS/ALB/frontend only) and
+# its targeted apply never touches iam.tf/buckets/sns/etc. Full-stack changes
+# (task-role grants, new buckets, ALB rules, Cognito, Valkey…) need broad infra
+# perms, so they get a SEPARATE role assumable ONLY from the gated GitHub
+# `infra-staging` / `infra-prod` environments (add required reviewers to those
+# environments in repo settings — especially infra-prod). Created once (in the
+# enable_ci_oidc=true workspace); referenced by both env workflows.
+# ---------------------------------------------------------------------------
+data "aws_iam_policy_document" "infra_apply_trust" {
+  count = var.enable_ci_oidc ? 1 : 0
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github[0].arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    # Assumable ONLY from a job pinned to the infra-* GitHub environments, so the
+    # environment's protection rules (required reviewers) gate every infra apply.
+    condition {
+      test     = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:ZOPKIT-CODE/Wrapper:environment:infra-*"]
+    }
+  }
+}
+
+data "aws_iam_policy_document" "infra_apply" {
+  count = var.enable_ci_oidc ? 1 : 0
+
+  # Service-bounded management of everything the stack provisions.
+  statement {
+    sid    = "InfraServices"
+    effect = "Allow"
+    actions = [
+      "ec2:*", "ecs:*", "elasticloadbalancing:*", "application-autoscaling:*",
+      "sns:*", "sqs:*", "elasticache:*", "cloudfront:*", "cognito-idp:*",
+      "route53:*", "acm:*", "logs:*", "s3:*", "secretsmanager:*", "ses:*",
+    ]
+    resources = ["*"]
+  }
+  # IAM is escalation-sensitive: scope writes to project-named principals + the
+  # OIDC provider. Reads are broad (terraform refresh + plan need them).
+  statement {
+    sid       = "IamProjectScoped"
+    effect    = "Allow"
+    actions   = ["iam:*"]
+    resources = ["arn:aws:iam::${local.account_id}:role/${var.project}-*", "arn:aws:iam::${local.account_id}:policy/${var.project}-*"]
+  }
+  statement {
+    sid       = "IamOidcProvider"
+    effect    = "Allow"
+    actions   = ["iam:GetOpenIDConnectProvider", "iam:UpdateOpenIDConnectProviderThumbprint", "iam:TagOpenIDConnectProvider"]
+    resources = [aws_iam_openid_connect_provider.github[0].arn]
+  }
+  statement {
+    sid       = "IamReadAndPassRole"
+    effect    = "Allow"
+    actions   = ["iam:Get*", "iam:List*", "iam:PassRole"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role" "infra_apply" {
+  count              = var.enable_ci_oidc ? 1 : 0
+  name               = "${var.project}-infra-apply"
+  assume_role_policy = data.aws_iam_policy_document.infra_apply_trust[0].json
+  tags               = local.common_tags
+}
+
+resource "aws_iam_role_policy" "infra_apply" {
+  count  = var.enable_ci_oidc ? 1 : 0
+  name   = "infra-apply"
+  role   = aws_iam_role.infra_apply[0].id
+  policy = data.aws_iam_policy_document.infra_apply[0].json
+}
+
+output "infra_apply_role_arn" {
+  description = "Role assumed by the infra-apply workflow (full terraform apply). Gated to the infra-* GitHub environments."
+  value       = one(aws_iam_role.infra_apply[*].arn)
+}
