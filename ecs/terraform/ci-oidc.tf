@@ -182,9 +182,10 @@ data "aws_iam_policy_document" "infra_apply" {
     sid    = "InfraServices"
     effect = "Allow"
     actions = [
-      "ec2:*", "ecs:*", "elasticloadbalancing:*", "application-autoscaling:*",
+      "ec2:*", "ecs:*", "ecr:*", "elasticloadbalancing:*", "application-autoscaling:*",
       "sns:*", "sqs:*", "elasticache:*", "cloudfront:*", "cognito-idp:*",
-      "route53:*", "acm:*", "logs:*", "s3:*", "secretsmanager:*", "ses:*",
+      "route53:*", "acm:*", "logs:*", "cloudwatch:*", "s3:*", "secretsmanager:*", "ses:*",
+      "kms:DescribeKey", "kms:ListAliases", "kms:CreateGrant",
     ]
     resources = ["*"]
   }
