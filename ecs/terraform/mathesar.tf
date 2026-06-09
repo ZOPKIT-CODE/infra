@@ -112,6 +112,26 @@ resource "aws_lb_target_group" "mathesar" {
   tags = local.common_tags
 }
 
+# SSO gate for the Mathesar URL. When the cognito vars are set, the ALB requires a
+# Cognito login (authenticate-cognito) BEFORE forwarding to Mathesar — so the UI
+# isn't reachable from the open internet, and it works on any network (no IP
+# allow-list, which CGNAT makes unreliable). Empty vars = no gate (forward only).
+variable "mathesar_cognito_user_pool_arn" {
+  description = "Cognito user pool ARN for the Mathesar ALB SSO gate. Empty = no SSO."
+  type        = string
+  default     = ""
+}
+variable "mathesar_cognito_client_id" {
+  description = "Cognito app client id (with a secret + the /oauth2/idpresponse callback) for the ALB SSO gate."
+  type        = string
+  default     = ""
+}
+variable "mathesar_cognito_domain" {
+  description = "Cognito hosted-UI domain PREFIX for the ALB SSO gate."
+  type        = string
+  default     = ""
+}
+
 resource "aws_lb_listener_rule" "mathesar" {
   count        = var.enable_rds ? 1 : 0
   listener_arn = aws_lb_listener.https.arn
@@ -119,8 +139,26 @@ resource "aws_lb_listener_rule" "mathesar" {
   # *.<root_domain> incl. db.<root_domain>) so db. routes to Mathesar, not wrapper.
   priority = 5
 
+  # SSO gate first (only when configured).
+  dynamic "action" {
+    for_each = var.mathesar_cognito_client_id != "" ? [1] : []
+    content {
+      type  = "authenticate-cognito"
+      order = 1
+      authenticate_cognito {
+        user_pool_arn              = var.mathesar_cognito_user_pool_arn
+        user_pool_client_id        = var.mathesar_cognito_client_id
+        user_pool_domain           = var.mathesar_cognito_domain
+        scope                      = "openid email profile"
+        on_unauthenticated_request = "authenticate"
+        session_timeout            = 43200
+      }
+    }
+  }
+
   action {
     type             = "forward"
+    order            = var.mathesar_cognito_client_id != "" ? 2 : 1
     target_group_arn = aws_lb_target_group.mathesar[0].arn
   }
 
