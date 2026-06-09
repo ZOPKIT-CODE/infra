@@ -44,11 +44,11 @@ enable_rds              = true
 rds_publicly_accessible = true
 rds_admin_cidrs         = ["157.50.86.215/32"]
 
-# Mathesar URL SSO gate — ALB requires Cognito login before reaching Mathesar
-# (works on CGNAT; no IP allow-list). Uses a DEDICATED internal-tools pool
-# (us-east-1_OtYJMnHdE) that is ADMIN-CREATE-ONLY + no Google — so ONLY accounts
-# an admin creates (the dev team) can pass the gate, not any public/self-signup
-# user. (The customer-facing app keeps the shared zopkit-platform pool.)
-mathesar_cognito_user_pool_arn = "arn:aws:cognito-idp:us-east-1:207567767101:userpool/us-east-1_OtYJMnHdE"
-mathesar_cognito_client_id     = "297e5sbe4343mu2lb39p6hd2vi"
-mathesar_cognito_domain        = "zopkit-internal-tools"
+# Mathesar SSO gate DISABLED — single login via Mathesar's own accounts instead
+# of the ALB Cognito gate (Mathesar's native OIDC is still WIP upstream, so a
+# clean single Cognito login isn't available). Access is gated by Mathesar's
+# login; admins create dev accounts in Mathesar (Administration → Users). Re-enable
+# the ALB Cognito gate by setting these to a pool/client/domain again.
+mathesar_cognito_user_pool_arn = ""
+mathesar_cognito_client_id     = ""
+mathesar_cognito_domain        = ""
