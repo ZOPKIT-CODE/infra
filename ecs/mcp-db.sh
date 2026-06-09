@@ -30,23 +30,48 @@ SECRET="zopkit/staging/rds-${APP}-${ROLE}"
 
 log() { echo "[mcp-db] $*" >&2; }
 
-# 1. Tunnel up? If not, open it (background) and close it when this process exits.
+# Tear down only the tunnel WE started (SUP_PID set): stop the supervisor, its
+# current aws child, and the session-manager-plugin bound to OUR local port
+# (matched precisely via localPortNumber so we never kill another app's tunnel).
+cleanup_tunnel() {
+  [ -n "${SUP_PID:-}" ] || return 0
+  kill -TERM "$SUP_PID" 2>/dev/null || true
+  pkill -P "$SUP_PID" 2>/dev/null || true
+  pkill -f "localPortNumber\":\[\"$PORT\"" 2>/dev/null || true
+}
+
+# 1. Tunnel up? If not, open a SELF-HEALING tunnel and tear it down on exit.
+#    The SSM session can drop (e.g. a broken pipe over a flaky/NAT64 network); a
+#    plain one-shot tunnel would then leave the MCP unusable until restart. So we
+#    run a supervisor that re-opens the session whenever it exits, for the life of
+#    this process. node-postgres just reconnects on the next query.
 if ! nc -z localhost "$PORT" 2>/dev/null; then
-  log "opening SSM tunnel localhost:$PORT -> RDS …"
+  log "opening self-healing SSM tunnel localhost:$PORT -> RDS …"
   BASTION=$(aws ec2 describe-instances --region "$REGION" \
     --filters Name=tag:Name,Values=zopkit-staging-bastion Name=instance-state-name,Values=running \
     --query 'Reservations[0].Instances[0].InstanceId' --output text)
   RDS=$(aws rds describe-db-instances --region "$REGION" \
     --db-instance-identifier zopkit-staging-db --query 'DBInstances[0].Endpoint.Address' --output text)
-  aws ssm start-session --region "$REGION" --target "$BASTION" \
-    --document-name AWS-StartPortForwardingSessionToRemoteHost \
-    --parameters "{\"host\":[\"$RDS\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"$PORT\"]}" \
-    >/tmp/mcp-db-tunnel-$APP.log 2>&1 &
-  TUNNEL_PID=$!
-  trap 'kill $TUNNEL_PID 2>/dev/null' EXIT
+  (
+    # Supervisor subshell: keep one SSM session alive; restart it if it exits.
+    trap 'kill "${aws_pid:-0}" 2>/dev/null; exit 0' TERM INT
+    while true; do
+      aws ssm start-session --region "$REGION" --target "$BASTION" \
+        --document-name AWS-StartPortForwardingSessionToRemoteHost \
+        --parameters "{\"host\":[\"$RDS\"],\"portNumber\":[\"5432\"],\"localPortNumber\":[\"$PORT\"]}" \
+        >>"/tmp/mcp-db-tunnel-$APP.log" 2>&1 &
+      aws_pid=$!
+      wait "$aws_pid"
+      echo "[mcp-db] tunnel session exited; reopening in 2s …" >>"/tmp/mcp-db-tunnel-$APP.log"
+      sleep 2
+    done
+  ) &
+  SUP_PID=$!
+  # On exit/termination, stop the supervisor + its SSM child + our plugin.
+  trap cleanup_tunnel EXIT INT TERM
   for _ in $(seq 1 30); do nc -z localhost "$PORT" 2>/dev/null && break; sleep 1; done
   nc -z localhost "$PORT" 2>/dev/null || { log "tunnel failed — is the SSM plugin installed + aws creds valid?"; exit 1; }
-  log "tunnel up"
+  log "tunnel up (self-healing)"
 fi
 
 # 2. Fetch creds, rewrite host -> localhost (route through the tunnel).
@@ -69,8 +94,10 @@ else:
 print(u)")
 
 # 3. Run the MCP (read-only viewer -> read-only server; migrator -> write-capable).
+#    NOT exec'd: we keep the bash process so the cleanup_tunnel EXIT trap fires and
+#    the self-healing tunnel is torn down with the server (exec would orphan it).
 if [ "$ROLE" = "migrator" ]; then
-  exec npx -y @henkey/postgres-mcp-server --connection-string "$URL"
+  npx -y @henkey/postgres-mcp-server --connection-string "$URL"
 else
-  exec npx -y @modelcontextprotocol/server-postgres "$URL"
+  npx -y @modelcontextprotocol/server-postgres "$URL"
 fi
