@@ -27,54 +27,62 @@ psql "postgresql://wrapper_viewer:<pw>@localhost:5432/wrapper_staging?sslmode=re
 Roles in that secret: `viewer` (read-only), `app` (DML), `migrator` (DDL/owner).
 
 ## 3. Query/analyze with Claude Code → Postgres MCP (auto-tunnel)
-**No manual tunnel.** The MCP launcher (`mcp-db.sh`) opens the SSM tunnel on demand
-and closes it on exit, fetches the read-only creds from Secrets Manager, and runs
-the Postgres MCP. So the whole dev setup is **one command**:
+**No manual tunnel.** The MCP launcher (`mcp-db.sh`) opens the SSM tunnel on demand,
+fetches the app's creds from Secrets Manager, and runs the Postgres MCP. Every app
+tunnels on its **own stable local port** (from `db-apps.sh`), so several apps' MCPs
+run side by side without colliding — that's what lets an admin keep all apps open
+at once. The whole setup is **one command**:
 
 ```bash
-# one-time (after the plugin install + `aws sso login`):
-./deploy/ecs/setup-db-mcp.sh wrapper      # registers the auto-tunneling MCP
-# then restart Claude Code → approve 'postgres-wrapper' → query the DB
+# A developer — one app:
+./deploy/ecs/setup-db-mcp.sh wrapper            # read-only MCP for one app
+./deploy/ecs/setup-db-mcp.sh crm migrator       # full (write) access to one app
+
+# An admin — every app at once (each on its own port, fully independent):
+./deploy/ecs/setup-db-mcp.sh --all              # all apps, migrator
+./deploy/ecs/setup-db-mcp.sh --all viewer       # all apps, read-only
 ```
-That's it — no `db-tunnel.sh`, no localhost juggling. The launcher handles the
-tunnel each time Claude Code starts the server.
+Then restart Claude Code → approve the `postgres-<app>` server(s) → query. No
+`db-tunnel.sh`, no localhost juggling; the launcher handles each tunnel itself.
 
-**Access level (2nd arg, default `viewer`):**
-- `viewer` (read-only) → analyze only. **The default and the right choice for devs.**
-- `migrator` (full read/write/DDL) → `./deploy/ecs/setup-db-mcp.sh wrapper migrator`.
-  ⚠️ Powerful (modify/drop). Staging is recoverable (backups + PITR); for prod use `viewer`.
+**App fleet + ports** live in **`deploy/ecs/db-apps.sh`** (the single source of
+truth): `wrapper→5432, crm→5433, fa→5434`. Add an app = one line there (next free
+port) + the slug in `local.apps` (terraform) + provision its DB & secrets.
 
-> The role in the connection string is the real boundary — the `viewer` role can't
-> write even if the MCP server allows it. `mcp-db.sh` / `db-tunnel.sh` are the manual
-> equivalents if you'd rather drive the tunnel yourself.
+**Access level (2nd arg):**
+- `viewer` (read-only) → analyze only. Default for a single dev (`setup-db-mcp.sh <app>`).
+- `migrator` (full read/write/DDL) → the default for `--all` (admin), or pass it
+  explicitly for one app. ⚠️ Powerful (modify/drop); staging is recoverable
+  (backups + PITR). The role in the connection string is the real boundary.
 
-## Onboarding a dev for SQL/MCP access (AWS SSO)
-Devs who only want to **browse** data need none of this — just Mathesar (§1). This
-is for devs who want **psql / a GUI / the Claude-Code MCP** (read-only).
+## Onboarding (AWS SSO)
+Browse-only? Use Mathesar (§1) — none of this needed. For **psql / a GUI / the
+Claude-Code MCP**, attach the right customer-managed policy to the person's
+**Identity Center permission set** (AWS console → IAM Identity Center → Permission
+sets → … → Customer managed policy). Terraform: `iam-db-dev.tf`.
 
-1. **Grant AWS access (admin, once per dev).** Attach the customer-managed policy
-   **`zopkit-staging-db-dev-access`** to the dev's **Identity Center permission set**
-   (AWS console → IAM Identity Center → Permission sets → … → Customer managed
-   policy → `zopkit-staging-db-dev-access`). It grants ONLY: the read-only viewer
-   secret + an SSM port-forward to the bastion. (Terraform: `iam-db-dev.tf`.)
-2. **Dev installs the plugin + logs in (one-time):**
-   ```bash
-   brew install --cask session-manager-plugin   # in their Terminal app (needs sudo)
-   aws sso login                                 # their Identity Center login
-   ```
-3. **Dev runs the one-command setup** (registers the auto-tunneling read-only MCP):
-   ```bash
-   ./deploy/ecs/setup-db-mcp.sh wrapper          # (or crm / fa)
-   ```
-4. **Restart Claude Code** → approve `postgres-wrapper`. Done — the MCP opens the
-   tunnel on demand; no manual tunnel, no localhost juggling. Read-only by IAM
-   (the dev policy can't even read the write-capable `migrator` creds).
+| Who | Policy to attach | Grants |
+|---|---|---|
+| **Developer (one app)** | `zopkit-staging-db-dev-<app>` (e.g. `-db-dev-wrapper`) | Full access to **that app's** DB only (its `-roles` + `-viewer` secrets) + SSM tunnel. |
+| **Admin (all apps)** | `zopkit-staging-db-admin` | Full access to **every** app's DB + SSM tunnel. |
 
-> Admins get full read/write by using `rds-wrapper-roles` (the `migrator` role) +
-> a write-capable server (§3); devs are scoped to read-only by IAM (viewer secret).
+Then the dev/admin, one-time:
+```bash
+brew install --cask session-manager-plugin   # in their Terminal app (needs sudo)
+aws sso login                                 # their Identity Center login
+./deploy/ecs/setup-db-mcp.sh wrapper          # dev: their app   (or `--all` for admin)
+```
+Restart Claude Code → approve the `postgres-<app>` server(s). Done.
+
+> **Isolation is by IAM, per app.** A dev with `db-dev-crm` can read only `crm`'s
+> secrets, so even if they registered `postgres-fa` the MCP can't fetch `fa`'s
+> creds. The admin policy is the only one that spans all apps.
 
 ## Notes
 - This documents **staging**. Prod will be private (no admin IP allow-list);
   same tunnel/MCP pattern, different secret/host.
-- Per-app isolation: each app gets its own database + `*_viewer` role; a viewer
-  for one app can't reach another app's data.
+- Per-app isolation: each app has its own database (`<app>_staging`) + role
+  secrets; access is scoped per app by IAM (see table above).
+- Only `wrapper` is provisioned today. `crm`/`fa` are in the manifest but need
+  their databases + `rds-<app>-{viewer,roles}` secrets created before their MCPs
+  will connect.

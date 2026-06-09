@@ -5,18 +5,26 @@
 #   claude mcp add postgres-wrapper -- bash /abs/path/deploy/ecs/mcp-db.sh wrapper
 #
 # On each launch it: (1) ensures the SSM tunnel to the RDS is up (opens it if not,
-# and tears it down on exit), (2) fetches the app's read-only viewer creds from
-# Secrets Manager, (3) runs the Postgres MCP against localhost. No manual tunnel,
-# no password on disk. Read-only by default; pass `migrator` as $2 for full access.
+# and tears it down on exit), (2) fetches the app's creds from Secrets Manager,
+# (3) runs the Postgres MCP against localhost. No manual tunnel, no password on
+# disk. Read-only by default; pass `migrator` as $2 for full access.
+#
+# Each app tunnels on its OWN stable local port (from db-apps.sh), so multiple
+# apps' MCPs (e.g. an admin with all 6 open) run side by side without colliding.
 #
 # Prereqs (one-time): AWS CLI v2 + creds (aws sso login), the Session Manager
 # plugin, and `nc` (preinstalled on macOS/Linux).
 set -euo pipefail
 
+DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=db-apps.sh
+source "$DIR/db-apps.sh"
+
 APP="${1:-wrapper}"
 ROLE="${2:-viewer}"                      # viewer (read-only) | migrator (full)
 REGION="${AWS_REGION:-us-east-1}"
-PORT="${MCP_DB_PORT:-5432}"
+# Per-app stable port from the manifest; MCP_DB_PORT overrides; 5432 if unknown.
+PORT="${MCP_DB_PORT:-$(db_app_port "$APP" || echo 5432)}"
 SECRET="zopkit/staging/rds-${APP}-${ROLE}"
 [ "$ROLE" = "migrator" ] && SECRET="zopkit/staging/rds-${APP}-roles"
 
@@ -42,12 +50,23 @@ if ! nc -z localhost "$PORT" 2>/dev/null; then
 fi
 
 # 2. Fetch creds, rewrite host -> localhost (route through the tunnel).
+#    Also force sslmode=no-verify: we connect to localhost, so the RDS cert's
+#    hostname/CA can never validate, and node-postgres treats sslmode=require as
+#    verify-CA (-> "self-signed certificate in certificate chain"). Traffic is
+#    already encrypted by the SSM tunnel, so skipping cert verification is safe.
 URL=$(aws secretsmanager get-secret-value --region "$REGION" --secret-id "$SECRET" \
   --query SecretString --output text | python3 -c "
 import sys,json,re
 d=json.load(sys.stdin)
-u=d.get('viewer') or d.get('migrator') or d.get('url')
-print(re.sub(r'@[^/@]+:5432','@localhost:${PORT}',u))")
+# Pick the URL matching the requested role (the -roles secret holds BOTH viewer
+# and migrator; don't blindly prefer viewer or migrator MCPs become read-only).
+u=d.get('${ROLE}') or d.get('viewer') or d.get('migrator') or d.get('url')
+u=re.sub(r'@[^/@]+:5432','@localhost:${PORT}',u)
+if 'sslmode=' in u:
+    u=re.sub(r'sslmode=[^&]*','sslmode=no-verify',u)
+else:
+    u=u+('&' if '?' in u else '?')+'sslmode=no-verify'
+print(u)")
 
 # 3. Run the MCP (read-only viewer -> read-only server; migrator -> write-capable).
 if [ "$ROLE" = "migrator" ]; then
