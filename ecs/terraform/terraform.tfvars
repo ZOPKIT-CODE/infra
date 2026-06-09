@@ -35,3 +35,11 @@ bypass_trial_restrictions = true
 
 # Reuse the shared dev logo/blog-media bucket (matches the shared dev DB image keys)
 logo_bucket_override = "wrapper-tenant-logos"
+
+# --- RDS (staging trial: wrapper first) ---
+# One t4g.micro hosting per-app staging databases. publicly_accessible for dev
+# convenience, SG-locked to the ECS tasks + the admin IP below. Prod will use a
+# separate instance, private (publicly_accessible=false, rds_admin_cidrs=[]).
+enable_rds              = true
+rds_publicly_accessible = true
+rds_admin_cidrs         = ["157.50.86.215/32"]
