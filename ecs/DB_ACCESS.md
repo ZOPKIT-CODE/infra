@@ -46,6 +46,36 @@ Use it:
 > The role in the connection string is the real boundary — the read-only
 > `viewer` role can't write even if the MCP server allows it.
 
+## Onboarding a dev for SQL/MCP access (AWS SSO)
+Devs who only want to **browse** data need none of this — just Mathesar (§1). This
+is for devs who want **psql / a GUI / the Claude-Code MCP** (read-only).
+
+1. **Grant AWS access (admin, once per dev).** Attach the customer-managed policy
+   **`zopkit-staging-db-dev-access`** to the dev's **Identity Center permission set**
+   (AWS console → IAM Identity Center → Permission sets → … → Customer managed
+   policy → `zopkit-staging-db-dev-access`). It grants ONLY: the read-only viewer
+   secret + an SSM port-forward to the bastion. (Terraform: `iam-db-dev.tf`.)
+2. **Dev installs + logs in:**
+   ```bash
+   brew install awscli session-manager-plugin
+   aws sso login            # their Identity Center login
+   ```
+3. **Dev adds the read-only MCP to their Claude Code:**
+   ```bash
+   claude mcp add postgres-wrapper-staging -- bash -c \
+   'u=$(aws secretsmanager get-secret-value --region us-east-1 \
+   --secret-id zopkit/staging/rds-wrapper-viewer --query SecretString --output text \
+   | python3 -c '"'"'import sys,json,re;u=json.load(sys.stdin)["viewer"];print(re.sub(r"@[^/@]+:5432","@localhost:5432",u))'"'"'); \
+   exec npx -y @modelcontextprotocol/server-postgres "$u"'
+   ```
+   (This uses the **read-only viewer** secret + a read-only MCP server — the dev
+   policy can't even read the write-capable `migrator` creds.)
+4. **Per session:** `./deploy/ecs/db-tunnel.sh` (leave running) → restart Claude
+   Code → approve the server. The dev now has read-only query access.
+
+> Admins get full read/write by using `rds-wrapper-roles` (the `migrator` role) +
+> a write-capable server (§3); devs are scoped to read-only by IAM (viewer secret).
+
 ## Notes
 - This documents **staging**. Prod will be private (no admin IP allow-list);
   same tunnel/MCP pattern, different secret/host.
