@@ -13,8 +13,11 @@ data "aws_ami" "al2023" {
   most_recent = true
   owners      = ["amazon"]
   filter {
-    name   = "name"
-    values = ["al2023-ami-*-arm64"]
+    name = "name"
+    # STANDARD AL2023 (NOT al2023-ami-minimal-*, which omits the SSM agent and
+    # never registers with Session Manager). The standard image ships + enables
+    # amazon-ssm-agent by default.
+    values = ["al2023-ami-2023.*-arm64"]
   }
   filter {
     name   = "architecture"
@@ -90,6 +93,14 @@ resource "aws_instance" "bastion" {
     http_tokens   = "required" # IMDSv2
     http_endpoint = "enabled"
   }
+
+  # Belt-and-suspenders: ensure the SSM agent is installed + running regardless
+  # of the AMI variant. Triggers a replacement when changed.
+  user_data = <<-EOF
+    #!/bin/bash
+    dnf install -y amazon-ssm-agent || yum install -y amazon-ssm-agent || true
+    systemctl enable --now amazon-ssm-agent || true
+  EOF
 
   tags = { Name = "${local.name_prefix}-bastion" }
 }
