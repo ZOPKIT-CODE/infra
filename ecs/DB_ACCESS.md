@@ -26,25 +26,27 @@ psql "postgresql://wrapper_viewer:<pw>@localhost:5432/wrapper_staging?sslmode=re
 ```
 Roles in that secret: `viewer` (read-only), `app` (DML), `migrator` (DDL/owner).
 
-## 3. Query/analyze with Claude Code → Postgres MCP
-`.mcp.json` (local, gitignored) defines **`postgres-wrapper-staging`** — it fetches
-DB creds from Secrets Manager at runtime and connects via the tunnel
-(`localhost:5432`), so **no password is stored on disk**.
+## 3. Query/analyze with Claude Code → Postgres MCP (auto-tunnel)
+**No manual tunnel.** The MCP launcher (`mcp-db.sh`) opens the SSM tunnel on demand
+and closes it on exit, fetches the read-only creds from Secrets Manager, and runs
+the Postgres MCP. So the whole dev setup is **one command**:
 
-Use it:
-1. Start the tunnel: `./deploy/ecs/db-tunnel.sh` (leave running).
-2. Make sure AWS creds + the Session Manager plugin are set up.
-3. (Re)start Claude Code and approve the `postgres-wrapper-staging` server.
+```bash
+# one-time (after the plugin install + `aws sso login`):
+./deploy/ecs/setup-db-mcp.sh wrapper      # registers the auto-tunneling MCP
+# then restart Claude Code → approve 'postgres-wrapper' → query the DB
+```
+That's it — no `db-tunnel.sh`, no localhost juggling. The launcher handles the
+tunnel each time Claude Code starts the server.
 
-**Access level — pick the role in the MCP command:**
-- `viewer` (read-only) + `@modelcontextprotocol/server-postgres` → analyze only.
-- `migrator` (full read/write/DDL) + `@henkey/postgres-mcp-server` → can also
-  INSERT/UPDATE/DELETE + create/alter/drop. ⚠️ **Powerful** — the assistant can
-  modify or delete data. Staging is recoverable (backups + PITR); for PROD prefer
-  the read-only `viewer` role.
+**Access level (2nd arg, default `viewer`):**
+- `viewer` (read-only) → analyze only. **The default and the right choice for devs.**
+- `migrator` (full read/write/DDL) → `./deploy/ecs/setup-db-mcp.sh wrapper migrator`.
+  ⚠️ Powerful (modify/drop). Staging is recoverable (backups + PITR); for prod use `viewer`.
 
-> The role in the connection string is the real boundary — the read-only
-> `viewer` role can't write even if the MCP server allows it.
+> The role in the connection string is the real boundary — the `viewer` role can't
+> write even if the MCP server allows it. `mcp-db.sh` / `db-tunnel.sh` are the manual
+> equivalents if you'd rather drive the tunnel yourself.
 
 ## Onboarding a dev for SQL/MCP access (AWS SSO)
 Devs who only want to **browse** data need none of this — just Mathesar (§1). This
@@ -55,23 +57,18 @@ is for devs who want **psql / a GUI / the Claude-Code MCP** (read-only).
    (AWS console → IAM Identity Center → Permission sets → … → Customer managed
    policy → `zopkit-staging-db-dev-access`). It grants ONLY: the read-only viewer
    secret + an SSM port-forward to the bastion. (Terraform: `iam-db-dev.tf`.)
-2. **Dev installs + logs in:**
+2. **Dev installs the plugin + logs in (one-time):**
    ```bash
-   brew install awscli session-manager-plugin
-   aws sso login            # their Identity Center login
+   brew install --cask session-manager-plugin   # in their Terminal app (needs sudo)
+   aws sso login                                 # their Identity Center login
    ```
-3. **Dev adds the read-only MCP to their Claude Code:**
+3. **Dev runs the one-command setup** (registers the auto-tunneling read-only MCP):
    ```bash
-   claude mcp add postgres-wrapper-staging -- bash -c \
-   'u=$(aws secretsmanager get-secret-value --region us-east-1 \
-   --secret-id zopkit/staging/rds-wrapper-viewer --query SecretString --output text \
-   | python3 -c '"'"'import sys,json,re;u=json.load(sys.stdin)["viewer"];print(re.sub(r"@[^/@]+:5432","@localhost:5432",u))'"'"'); \
-   exec npx -y @modelcontextprotocol/server-postgres "$u"'
+   ./deploy/ecs/setup-db-mcp.sh wrapper          # (or crm / fa)
    ```
-   (This uses the **read-only viewer** secret + a read-only MCP server — the dev
-   policy can't even read the write-capable `migrator` creds.)
-4. **Per session:** `./deploy/ecs/db-tunnel.sh` (leave running) → restart Claude
-   Code → approve the server. The dev now has read-only query access.
+4. **Restart Claude Code** → approve `postgres-wrapper`. Done — the MCP opens the
+   tunnel on demand; no manual tunnel, no localhost juggling. Read-only by IAM
+   (the dev policy can't even read the write-capable `migrator` creds).
 
 > Admins get full read/write by using `rds-wrapper-roles` (the `migrator` role) +
 > a write-capable server (§3); devs are scoped to read-only by IAM (viewer secret).
