@@ -17,6 +17,7 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO="$(cd "$DIR/../.." && pwd)"
 # shellcheck source=db-apps.sh
 source "$DIR/db-apps.sh"
 
@@ -30,15 +31,19 @@ SECRET="zopkit/staging/rds-${APP}-${ROLE}"
 
 log() { echo "[mcp-db] $*" >&2; }
 
-# Tear down only the tunnel WE started (SUP_PID set): stop the supervisor, its
-# current aws child, and the session-manager-plugin bound to OUR local port
-# (matched precisely via localPortNumber so we never kill another app's tunnel).
+# Tear down what WE started: the keepalive warmer (always ours) and — only if we
+# opened the tunnel (SUP_PID set) — the supervisor, its current aws child, and the
+# session-manager-plugin bound to OUR local port (matched precisely via
+# localPortNumber so we never kill another app's tunnel).
 cleanup_tunnel() {
-  [ -n "${SUP_PID:-}" ] || return 0
-  kill -TERM "$SUP_PID" 2>/dev/null || true
-  pkill -P "$SUP_PID" 2>/dev/null || true
-  pkill -f "localPortNumber\":\[\"$PORT\"" 2>/dev/null || true
+  [ -n "${WARMER_PID:-}" ] && kill "$WARMER_PID" 2>/dev/null || true
+  if [ -n "${SUP_PID:-}" ]; then
+    kill -TERM "$SUP_PID" 2>/dev/null || true
+    pkill -P "$SUP_PID" 2>/dev/null || true
+    pkill -f "localPortNumber\":\[\"$PORT\"" 2>/dev/null || true
+  fi
 }
+trap cleanup_tunnel EXIT INT TERM
 
 # 1. Tunnel up? If not, open a SELF-HEALING tunnel and tear it down on exit.
 #    The SSM session can drop (e.g. a broken pipe over a flaky/NAT64 network); a
@@ -67,8 +72,6 @@ if ! nc -z localhost "$PORT" 2>/dev/null; then
     done
   ) &
   SUP_PID=$!
-  # On exit/termination, stop the supervisor + its SSM child + our plugin.
-  trap cleanup_tunnel EXIT INT TERM
   for _ in $(seq 1 30); do nc -z localhost "$PORT" 2>/dev/null && break; sleep 1; done
   nc -z localhost "$PORT" 2>/dev/null || { log "tunnel failed — is the SSM plugin installed + aws creds valid?"; exit 1; }
   log "tunnel up (self-healing)"
@@ -93,10 +96,57 @@ else:
     u=u+('&' if '?' in u else '?')+'sslmode=no-verify'
 print(u)")
 
+# 2.5 Pre-warm the SSM channel and keep it warm. The FIRST connection through a
+#     freshly-opened SSM tunnel cold-starts the remote channel (~4-7s), which
+#     exceeds the MCP server's hardcoded 2s connect timeout — so the first query
+#     (or a reconnect after idle) times out. A background pinger holds a connection
+#     open and SELECT 1s every 15s, keeping the channel hot so the server's
+#     (re)connects land well under 2s. Best-effort: needs the repo's postgres
+#     client; on a fast network where cold-start is <2s it's simply not needed.
+WARM_MOD="$REPO/backend/node_modules/postgres"
+if [ -d "$WARM_MOD" ]; then
+  ( PGURL="$URL" WARM_MOD="$WARM_MOD" node -e '
+      const postgres = require(process.env.WARM_MOD);
+      const sql = postgres(process.env.PGURL, { ssl:{rejectUnauthorized:false}, max:1, connect_timeout:30, idle_timeout:0, max_lifetime:0 });
+      (async()=>{ for(;;){ try { await sql`SELECT 1` } catch(e){} await new Promise(r=>setTimeout(r,15000)); } })();
+    ' >>"/tmp/mcp-db-tunnel-$APP.log" 2>&1 ) &
+  WARMER_PID=$!
+  log "warming tunnel channel …"
+  # Block until one real connection succeeds (channel hot), or ~30s elapse.
+  PGURL="$URL" WARM_MOD="$WARM_MOD" node -e '
+      const postgres = require(process.env.WARM_MOD);
+      const sql = postgres(process.env.PGURL, { ssl:{rejectUnauthorized:false}, max:1, connect_timeout:30 });
+      sql`SELECT 1`.then(()=>sql.end()).then(()=>process.exit(0)).catch(()=>process.exit(1));
+    ' >>"/tmp/mcp-db-tunnel-$APP.log" 2>&1 && log "tunnel warm" || log "warm-up timed out (continuing)"
+fi
+
+# @henkey (migrator server) hardcodes a 2s connect timeout and closes idle
+# connections after 30s. Over an SSM tunnel the postgres TLS handshake needs
+# several high-latency round-trips (local -> AWS SSM -> bastion -> RDS), so a cold
+# connect takes ~3-7s — it would never beat 2s. Patch its cached build to wait
+# longer (30s) and hold the pooled connection open (idle 0), so it pays the slow
+# handshake ONCE then reuses the warm connection. Idempotent + re-applied each
+# launch, so it survives npx cache refreshes. (The viewer server uses pg's default
+# no-timeout, so it needs no patch.)
+patch_henkey_timeouts() {
+  local f
+  f=$(find "$HOME/.npm/_npx" -path "*@henkey/postgres-mcp-server/build/utils/connection.js" 2>/dev/null | head -1)
+  if [ -z "$f" ]; then
+    npx -y @henkey/postgres-mcp-server --version >/dev/null 2>&1 || true
+    f=$(find "$HOME/.npm/_npx" -path "*@henkey/postgres-mcp-server/build/utils/connection.js" 2>/dev/null | head -1)
+  fi
+  [ -n "$f" ] || { log "could not locate @henkey to patch timeouts (continuing)"; return 0; }
+  sed -i.bak -E \
+    -e 's/connectionTimeoutMillis: options\.connectionTimeoutMillis \|\| 2000/connectionTimeoutMillis: options.connectionTimeoutMillis || 30000/' \
+    -e 's/idleTimeoutMillis: options\.idleTimeoutMillis \|\| 30000/idleTimeoutMillis: options.idleTimeoutMillis || 0/' \
+    "$f" 2>/dev/null || true
+}
+
 # 3. Run the MCP (read-only viewer -> read-only server; migrator -> write-capable).
 #    NOT exec'd: we keep the bash process so the cleanup_tunnel EXIT trap fires and
 #    the self-healing tunnel is torn down with the server (exec would orphan it).
 if [ "$ROLE" = "migrator" ]; then
+  patch_henkey_timeouts
   npx -y @henkey/postgres-mcp-server --connection-string "$URL"
 else
   npx -y @modelcontextprotocol/server-postgres "$URL"
