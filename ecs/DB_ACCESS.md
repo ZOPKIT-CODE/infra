@@ -26,6 +26,18 @@ psql "postgresql://wrapper_viewer:<pw>@localhost:5432/wrapper_staging?sslmode=re
 ```
 Roles in that secret: `viewer` (read-only), `app` (DML), `migrator` (DDL/owner).
 
+**Running the local backends against staging RDS?** Each app's `.env` points at its
+own pinned local port (wrapper `5432`, crm `5433`, fa `5434` — see `db-apps.sh`), so
+open all of them at once with one self-healing command:
+```bash
+./deploy/ecs/db-tunnels-up.sh          # open every app's tunnel (background, self-healing)
+./deploy/ecs/db-tunnels-up.sh status   # which ports are up
+./deploy/ecs/db-tunnels-up.sh down     # stop the ones it started
+```
+Leave it running and start your backends — their startup banner shows `DB ✓`. (If
+Claude Code is open with the `postgres-*` MCP servers, those already hold these
+ports; the script detects that and leaves them alone.)
+
 ## 3. Query/analyze with Claude Code → Postgres MCP (auto-tunnel)
 **No manual tunnel.** The MCP launcher (`mcp-db.sh`) opens the SSM tunnel on demand,
 fetches the app's creds from Secrets Manager, and runs the Postgres MCP. Every app
