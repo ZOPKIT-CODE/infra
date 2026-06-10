@@ -68,17 +68,11 @@ resource "aws_security_group" "bastion" {
   tags = { Name = "${local.name_prefix}-bastion" }
 }
 
-# Let the bastion reach RDS on 5432.
-resource "aws_security_group_rule" "rds_from_bastion" {
-  count                    = var.enable_rds ? 1 : 0
-  type                     = "ingress"
-  description              = "Postgres from SSM bastion"
-  from_port                = 5432
-  to_port                  = 5432
-  protocol                 = "tcp"
-  security_group_id        = aws_security_group.rds[0].id
-  source_security_group_id = aws_security_group.bastion[0].id
-}
+# The bastion→RDS 5432 ingress lives INLINE in aws_security_group.rds (rds.tf).
+# It was previously a separate aws_security_group_rule here, which Terraform kept
+# stripping on any apply that touched the SG (inline rules are treated as the
+# complete set) — silently breaking every dev tunnel/MCP. Do not re-add it as a
+# separate resource.
 
 resource "aws_instance" "bastion" {
   count                       = var.enable_rds ? 1 : 0

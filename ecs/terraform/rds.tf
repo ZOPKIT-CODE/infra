@@ -67,6 +67,19 @@ resource "aws_security_group" "rds" {
     security_groups = [aws_security_group.tasks.id]
   }
 
+  # INLINE (not a separate aws_security_group_rule): this SG uses inline ingress
+  # blocks, and Terraform treats the inline set as COMPLETE — any rule managed as
+  # a separate resource is stripped by the next apply that touches this SG. That
+  # is exactly how the bastion rule silently vanished before (breaking every dev
+  # tunnel/MCP). Keep ALL ingress for this SG inline.
+  ingress {
+    description     = "Postgres from SSM bastion"
+    from_port       = 5432
+    to_port         = 5432
+    protocol        = "tcp"
+    security_groups = [aws_security_group.bastion[0].id]
+  }
+
   dynamic "ingress" {
     for_each = var.rds_admin_cidrs
     content {

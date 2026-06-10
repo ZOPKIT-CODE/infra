@@ -79,7 +79,13 @@ resource "aws_ecs_task_definition" "mathesar" {
       { name = "POSTGRES_DB", value = "mathesar_django" },
       { name = "POSTGRES_USER", value = "mathesar" },
       { name = "POSTGRES_SSLMODE", value = "require" },
-      { name = "ALLOWED_HOSTS", value = "db.${var.root_domain}" },
+      # "*" because the ALB health check hits the target's PRIVATE IP with
+      # `Host: <ip>:8000`; a strict host list makes Django answer 400 → the check
+      # fails 5x → ECS kills the task → a ~9-minute restart loop (the service
+      # still "worked" via the real hostname between kills). Host-header strictness
+      # buys nothing here: the task SG only admits traffic FROM the ALB, and the
+      # ALB only forwards the db.<domain> host rule to this target group.
+      { name = "ALLOWED_HOSTS", value = "*" },
     ]
     secrets = [
       { name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.mathesar[0].arn}:POSTGRES_PASSWORD::" },
