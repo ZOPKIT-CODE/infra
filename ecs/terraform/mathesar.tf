@@ -6,26 +6,32 @@
 # `mathesar_django` database on the RDS instance (created out-of-band via the
 # db-admin task). Gated by var.enable_rds.
 
+variable "enable_mathesar" {
+  description = "Deploy the Mathesar UI (staging only by default; keep OFF in prod — no public DB UI)."
+  type        = bool
+  default     = false
+}
+
 resource "random_password" "mathesar_db" {
-  count   = var.enable_rds ? 1 : 0
+  count   = var.enable_rds && var.enable_mathesar ? 1 : 0
   length  = 32
   special = false
 }
 
 resource "random_password" "mathesar_secret_key" {
-  count   = var.enable_rds ? 1 : 0
+  count   = var.enable_rds && var.enable_mathesar ? 1 : 0
   length  = 50
   special = false
 }
 
 resource "aws_secretsmanager_secret" "mathesar" {
-  count = var.enable_rds ? 1 : 0
+  count = var.enable_rds && var.enable_mathesar ? 1 : 0
   name  = "zopkit/${var.environment}/mathesar"
   tags  = local.common_tags
 }
 
 resource "aws_secretsmanager_secret_version" "mathesar" {
-  count     = var.enable_rds ? 1 : 0
+  count     = var.enable_rds && var.enable_mathesar ? 1 : 0
   secret_id = aws_secretsmanager_secret.mathesar[0].id
   secret_string = jsonencode({
     POSTGRES_PASSWORD = random_password.mathesar_db[0].result
@@ -36,7 +42,7 @@ resource "aws_secretsmanager_secret_version" "mathesar" {
 # Allow the ALB to reach Mathesar's container port (8000) — the app SG rules only
 # cover local.services ports, so add Mathesar's explicitly.
 resource "aws_security_group_rule" "tasks_from_alb_mathesar" {
-  count                    = var.enable_rds ? 1 : 0
+  count                    = var.enable_rds && var.enable_mathesar ? 1 : 0
   type                     = "ingress"
   description              = "From ALB on Mathesar port 8000"
   from_port                = 8000
@@ -47,14 +53,14 @@ resource "aws_security_group_rule" "tasks_from_alb_mathesar" {
 }
 
 resource "aws_cloudwatch_log_group" "mathesar" {
-  count             = var.enable_rds ? 1 : 0
+  count             = var.enable_rds && var.enable_mathesar ? 1 : 0
   name              = "/ecs/${local.name_prefix}/mathesar"
   retention_in_days = 14
   tags              = local.common_tags
 }
 
 resource "aws_ecs_task_definition" "mathesar" {
-  count                    = var.enable_rds ? 1 : 0
+  count                    = var.enable_rds && var.enable_mathesar ? 1 : 0
   family                   = "${local.name_prefix}-mathesar"
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
@@ -93,7 +99,7 @@ resource "aws_ecs_task_definition" "mathesar" {
 }
 
 resource "aws_lb_target_group" "mathesar" {
-  count       = var.enable_rds ? 1 : 0
+  count       = var.enable_rds && var.enable_mathesar ? 1 : 0
   name        = "${local.name_prefix}-mathesar"
   port        = 8000
   protocol    = "HTTP"
@@ -133,7 +139,7 @@ variable "mathesar_cognito_domain" {
 }
 
 resource "aws_lb_listener_rule" "mathesar" {
-  count        = var.enable_rds ? 1 : 0
+  count        = var.enable_rds && var.enable_mathesar ? 1 : 0
   listener_arn = aws_lb_listener.https.arn
   # Must out-prioritize the tenant_wildcard rule (priority 11, matches
   # *.<root_domain> incl. db.<root_domain>) so db. routes to Mathesar, not wrapper.
@@ -170,7 +176,7 @@ resource "aws_lb_listener_rule" "mathesar" {
 }
 
 resource "aws_ecs_service" "mathesar" {
-  count           = var.enable_rds ? 1 : 0
+  count           = var.enable_rds && var.enable_mathesar ? 1 : 0
   name            = "${local.name_prefix}-mathesar"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.mathesar[0].arn
@@ -197,7 +203,7 @@ resource "aws_ecs_service" "mathesar" {
 
 # db.<root_domain> → shared ALB.
 resource "aws_route53_record" "mathesar" {
-  count   = var.enable_rds ? 1 : 0
+  count   = var.enable_rds && var.enable_mathesar ? 1 : 0
   zone_id = local.route53_zone_id
   name    = "db.${var.root_domain}"
   type    = "A"
@@ -211,5 +217,5 @@ resource "aws_route53_record" "mathesar" {
 
 output "mathesar_url" {
   description = "Mathesar UI URL (in-VPC, behind the ALB)."
-  value       = var.enable_rds ? "https://db.${var.root_domain}" : null
+  value       = var.enable_rds && var.enable_mathesar ? "https://db.${var.root_domain}" : null
 }

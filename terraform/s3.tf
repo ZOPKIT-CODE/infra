@@ -142,3 +142,19 @@ resource "aws_s3_bucket_cors_configuration" "fa_receipts" {
     max_age_seconds = 3600
   }
 }
+
+# Blog media (cover + inline images) are uploaded straight to the wrapper logos
+# bucket via presigned PUT from the wrapper SPA, so the bucket needs a CORS rule
+# for the wrapper frontend origin. The objects themselves stay private and are
+# served back through the backend media proxy (GET /blog/_media/*), not directly.
+resource "aws_s3_bucket_cors_configuration" "wrapper_logos" {
+  bucket = aws_s3_bucket.buckets["wrapper_logos"].id
+
+  cors_rule {
+    allowed_methods = ["GET", "PUT", "POST"]
+    allowed_origins = ["https://${local.fqdn["wrapper"].frontend}"]
+    allowed_headers = ["*"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3600
+  }
+}

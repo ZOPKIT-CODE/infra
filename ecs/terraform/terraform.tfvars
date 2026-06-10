@@ -41,6 +41,7 @@ logo_bucket_override = "wrapper-tenant-logos"
 # convenience, SG-locked to the ECS tasks + the admin IP below. Prod will use a
 # separate instance, private (publicly_accessible=false, rds_admin_cidrs=[]).
 enable_rds              = true
+enable_mathesar         = true
 rds_publicly_accessible = true
 rds_admin_cidrs         = ["157.50.86.215/32"]
 

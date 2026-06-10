@@ -8,7 +8,7 @@
 #     which wires the OIDC trust + managed-style inline policies for us.
 # (B) Per-app workload roles (wrapper/crm/fa) are hand-rolled so we can attach
 #     tightly-scoped, least-privilege policies that reference the exact ARNs of
-#     the resources each app touches (SNS/SQS/EventBridge/S3/Cognito/Secrets).
+#     the resources each app touches (SNS/SQS/S3/Cognito/Secrets).
 #
 # IRSA trust contract (per spec CONVENTIONS):
 #   Federated   = module.eks.oidc_provider_arn

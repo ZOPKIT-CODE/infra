@@ -26,8 +26,8 @@ locals {
   #
   # leader_safe = true  -> background jobs use Postgres pg_try_advisory_lock and
   #                        are safe on every pod; the web Deployment may scale + HPA.
-  # leader_safe = false -> an UNGUARDED EventBridge outbox poller runs on every
-  #                        pod (double-publishes under scale-out). web is pinned
+  # leader_safe = false -> an UNGUARDED business-events (SNS) outbox poller runs on
+  #                        every pod (double-publishes under scale-out). web is pinned
   #                        to replicas=1 / HPA disabled until the poller is
   #                        leader-gated or split into a dedicated worker.
   # ----------------------------------------------------------------------------
@@ -77,14 +77,15 @@ locals {
   }
 
   # ----------------------------------------------------------------------------
-  # MESSAGING TOPOLOGY (two buses):
+  # MESSAGING TOPOLOGY (two buses, both SNS -> SQS):
   #   1. Wrapper "platform bus"  = SNS (targeted + broadcast) -> per-app SQS.
-  #   2. CRM/FA "business bus"   = EventBridge bus -> rules -> per-app SQS.
+  #   2. CRM/FA "business bus"   = SNS business-events topic -> per-app SQS
+  #      (each queue filters out its own app's events via sourceSystem anything-but).
   # ----------------------------------------------------------------------------
   sns_topics = {
     inter_app_events    = "${local.name_prefix}-inter-app-events"    # targeted (wrapper platform bus)
     inter_app_broadcast = "${local.name_prefix}-inter-app-broadcast" # fanout (wrapper platform bus)
-    business_events     = "${local.name_prefix}-business-events"     # CRM/FA domain events (replaces the EventBridge bus)
+    business_events     = "${local.name_prefix}-business-events"     # CRM/FA domain events business bus
   }
 
   # SQS queues: name => { app target, dlq?, source, filter_target }

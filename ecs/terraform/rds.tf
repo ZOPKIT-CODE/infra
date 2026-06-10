@@ -32,6 +32,19 @@ variable "rds_publicly_accessible" {
   default     = false
 }
 
+
+variable "rds_deletion_protection" {
+  description = "Protect the DB from accidental deletion (true for prod)."
+  type        = bool
+  default     = false
+}
+
+variable "rds_skip_final_snapshot" {
+  description = "Skip the final snapshot on destroy (true for staging convenience; FALSE for prod)."
+  type        = bool
+  default     = true
+}
+
 # Master/superuser password — used only to create per-app databases + roles.
 resource "random_password" "rds_master" {
   count   = var.enable_rds ? 1 : 0
@@ -115,9 +128,10 @@ resource "aws_db_instance" "this" {
   performance_insights_enabled = true
 
   # Staging convenience; tighten for prod (deletion_protection=true, final snapshot).
-  apply_immediately   = true
-  skip_final_snapshot = true
-  deletion_protection = false
+  apply_immediately         = true
+  skip_final_snapshot       = var.rds_skip_final_snapshot
+  final_snapshot_identifier = var.rds_skip_final_snapshot ? null : "${local.name_prefix}-db-final"
+  deletion_protection       = var.rds_deletion_protection
 
   auto_minor_version_upgrade = true
 

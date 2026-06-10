@@ -15,7 +15,7 @@ variable "environment" {
 }
 
 variable "aws_region" {
-  description = "Primary AWS region (EKS, SNS/SQS, EventBridge, ElastiCache, Cognito, ALB)."
+  description = "Primary AWS region (EKS, SNS/SQS, ElastiCache, Cognito, ALB)."
   type        = string
   default     = "us-east-1"
 }
@@ -88,6 +88,17 @@ variable "node_group_desired" {
   default     = 3
 }
 
+variable "node_capacity_type" {
+  description = "EKS managed node group capacity type: ON_DEMAND (stable, prod) or SPOT (up to ~70% cheaper, may be reclaimed — good for staging/dev). For SPOT, set node_instance_types to several comparable types to improve availability."
+  type        = string
+  default     = "ON_DEMAND"
+
+  validation {
+    condition     = contains(["ON_DEMAND", "SPOT"], var.node_capacity_type)
+    error_message = "node_capacity_type must be ON_DEMAND or SPOT."
+  }
+}
+
 variable "cluster_admin_role_arns" {
   description = "Additional IAM role ARNs granted cluster-admin (access entries)."
   type        = list(string)
@@ -124,6 +135,12 @@ variable "cognito_domain_prefix" {
   description = "Cognito hosted-UI domain prefix (must be globally unique)."
   type        = string
   default     = "zopkit-platform"
+}
+
+variable "cognito_platform_admin_group" {
+  description = "Cognito group whose members are internal platform admins (cross-tenant plane). Surfaced via the cognito:groups claim; read by the backend as COGNITO_PLATFORM_ADMIN_GROUP."
+  type        = string
+  default     = "platform-admins"
 }
 
 # --- Container images (set by CI; placeholders until first push) ---

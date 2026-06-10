@@ -1,7 +1,7 @@
 # ---------------------------------------------------------------------------
 # Providers.
 #
-# - aws            : primary region (everything: EKS, SNS/SQS, EventBridge,
+# - aws            : primary region (everything: EKS, SNS/SQS,
 #                    ElastiCache, Cognito, ALB). Default us-east-1.
 # - aws.us_east_1  : pinned us-east-1 alias. CloudFront REQUIRES its ACM cert
 #                    in us-east-1; keep this alias even if primary == us-east-1.

@@ -15,7 +15,7 @@ image:
   pullPolicy: IfNotPresent
 
 # Web Deployment replica count. For leader-unsafe apps (crm, fa) this MUST be 1
-# (their EventBridge outbox poller has no leader election) — autoscaling stays off.
+# (their business-events SNS outbox poller has no leader election) — autoscaling stays off.
 replicaCount: 1
 
 port: 3000

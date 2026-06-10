@@ -348,8 +348,9 @@ data "aws_iam_policy_document" "execution_secrets" {
     resources = concat(
       [for k in keys(local.apps) : aws_secretsmanager_secret.app[k].arn],
       [aws_secretsmanager_secret.valkey.arn],
-      # RDS rollout: master (db-admin provisioning task) + mathesar service secret.
-      var.enable_rds ? [aws_secretsmanager_secret.rds_master[0].arn, aws_secretsmanager_secret.mathesar[0].arn] : [],
+      # RDS rollout: master (db-admin provisioning task); mathesar secret only when deployed.
+      var.enable_rds ? [aws_secretsmanager_secret.rds_master[0].arn] : [],
+      var.enable_rds && var.enable_mathesar ? [aws_secretsmanager_secret.mathesar[0].arn] : [],
     )
   }
 }

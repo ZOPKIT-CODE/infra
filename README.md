@@ -9,6 +9,8 @@ for auth and **Supabase Postgres** as the external system of record.
 > Helm-render, and scaling-caveats runbook. The Terraform `outputs.tf`,
 > `terraform.tfvars.example`, and the per-app Helm `values-*.yaml` are the
 > authoritative wiring; this doc explains how to drive them.
+>
+> **Infrastructure diagrams (Mermaid):** [`INFRA_OVERVIEW.md`](./INFRA_OVERVIEW.md) (detailed network path) · [`ARCHITECTURE.md`](./ARCHITECTURE.md) · [`system-architecture.md`](./system-architecture.md)
 
 ---
 
@@ -36,7 +38,7 @@ for auth and **Supabase Postgres** as the external system of record.
    └─ accounting-api.zopkit.com ─────────────────┘
 
   Messaging:  wrapper ──SNS──▶ (inter-app-events / inter-app-broadcast) ──▶ SQS
-              crm/fa  ──EventBridge (business-events) ──rules──▶ SQS
+              crm/fa  ──SNS (business-events) ──filter──▶ SQS
   Cache:      ElastiCache Valkey (rediss://, AUTH) — perm/auth cache coherence
   Storage:    S3 (claim-check, logos, attachments, receipts, ses-inbound, fe-*)
   Auth:       Cognito user pool + per-app clients (SRP/PKCE)
@@ -46,11 +48,13 @@ for auth and **Supabase Postgres** as the external system of record.
 Two messaging substrates:
 
 1. **Platform bus (SNS):** `wrapper` publishes to `…-inter-app-events` (targeted
-   via the `targetApplication` message attribute) and `…-inter-app-broadcast`
+  via the `targetApplication` message attribute) and `…-inter-app-broadcast`
    (fanout). Each consumer queue subscribes to both; targeted subscriptions carry
    a `filter_policy`.
-2. **Business bus (EventBridge):** `crm` and `fa` publish domain events to the
-   `…-business-events` bus; rules route them to per-app SQS queues.
+2. **Business bus (SNS):** `crm` and `fa` publish domain events to the
+  `…-business-events` SNS topic; each per-app business-events SQS queue subscribes
+   with a `filter_policy` that excludes its own app's events (`sourceSystem`
+   anything-but loop-guard).
 
 All SQS consumers run **in-process inside Fastify** (no Lambda), except FA's
 accounting consumer which is a **separate worker process** (see Helm `workers`).
@@ -59,31 +63,33 @@ accounting consumer which is a **separate worker process** (see Helm `workers`).
 
 ## Prerequisites
 
-| Tool      | Version    | Notes                                            |
-|-----------|------------|--------------------------------------------------|
-| terraform | **>= 1.6** | Required for the provider/module versions pinned in `versions.tf`. |
-| helm      | **>= 3.12**| Chart is Helm 3.                                  |
-| kubectl   | matches `kubernetes_version` (±1 minor) | For post-apply ops. |
-| aws cli   | **>= 2.x** | Used for `eks update-kubeconfig`, ECR login, `s3 sync`. |
-| docker    | any recent | Builds the three backend images (linux/amd64).   |
-| jq        | any        | Extracts `app_wiring` JSON.                       |
-| yq        | **>= 4.x** (mikefarah) | Merges Terraform output onto the Helm values (`scripts/render-values.sh`). |
+
+| Tool      | Version                                 | Notes                                                                      |
+| --------- | --------------------------------------- | -------------------------------------------------------------------------- |
+| terraform | **>= 1.6**                              | Required for the provider/module versions pinned in `versions.tf`.         |
+| helm      | **>= 3.12**                             | Chart is Helm 3.                                                           |
+| kubectl   | matches `kubernetes_version` (±1 minor) | For post-apply ops.                                                        |
+| aws cli   | **>= 2.x**                              | Used for `eks update-kubeconfig`, ECR login, `s3 sync`.                    |
+| docker    | any recent                              | Builds the three backend images (linux/amd64).                             |
+| jq        | any                                     | Extracts `app_wiring` JSON.                                                |
+| yq        | **>= 4.x** (mikefarah)                  | Merges Terraform output onto the Helm values (`scripts/render-values.sh`). |
+
 
 Also required **before** apply:
 
 - **Route53 hosted zone** for `var.root_domain` (`zopkit.com`). Either let
-  Terraform create it (`create_route53_zone = true`) or point at an existing one
-  (`false` → looked up by name). The two ACM certs are DNS-validated against this
-  zone, so the zone's nameservers must be live at the registrar for validation to
-  complete.
+Terraform create it (`create_route53_zone = true`) or point at an existing one
+(`false` → looked up by name). The two ACM certs are DNS-validated against this
+zone, so the zone's nameservers must be live at the registrar for validation to
+complete.
 - **Supabase projects** (one per app) provisioned out-of-band. Their
-  `DATABASE_URL`s go into the per-app Secrets Manager secrets — **PgBouncer /
-  transaction-pooler endpoints strongly recommended** (see Scaling Caveats).
+`DATABASE_URL`s go into the per-app Secrets Manager secrets — **PgBouncer /
+transaction-pooler endpoints strongly recommended** (see Scaling Caveats).
 - **SES domain identity verification + MX records** — only if you keep CRM SES
-  inbound (`ses_inbound.tf`). If unused, delete that file before apply.
+inbound (`ses_inbound.tf`). If unused, delete that file before apply.
 - **A Temporal endpoint** — only if you enable FA's Temporal workers. FA's
-  *aggregate* health (`/api/health/health`) hard-requires Temporal; the
-  liveness/readiness probes deliberately do **not** (see Scaling Caveats).
+*aggregate* health (`/api/health/health`) hard-requires Temporal; the
+liveness/readiness probes deliberately do **not** (see Scaling Caveats).
 
 ---
 
@@ -144,12 +150,14 @@ crash-loop**, so populate first.
 Secrets (one JSON document per app, plus the Valkey secret created by
 `elasticache.tf`):
 
-| Secret name              | Owner   | Notes                                  |
-|--------------------------|---------|----------------------------------------|
-| `zopkit/prod/wrapper`    | wrapper | DB URLs, JWT/session secrets, Stripe/Razorpay, Brevo/SMTP, OpenAI, Sentry, Supabase keys. |
-| `zopkit/prod/crm`        | crm     | DB URL, JWTs, wrapper/FA service tokens, Brevo, SES webhook secret, Anthropic, Google/MS/Slack/Cloudinary integration creds. |
-| `zopkit/prod/fa`         | fa      | DB URL, JWT/refresh secrets, wrapper API/fetch tokens, internal/SSE/bootstrap secrets, tax/tenant encryption keys, Anthropic, FX API, SMTP, Temporal key, CORS. |
-| `…-valkey` (by ARN)      | infra   | Auto-populated by Terraform (`REDIS_URL`, `REDIS_PASSWORD`, TLS) — **do not edit**. |
+
+| Secret name           | Owner   | Notes                                                                                                                                                           |
+| --------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zopkit/prod/wrapper` | wrapper | DB URLs, JWT/session secrets, Stripe/Razorpay, Brevo/SMTP, OpenAI, Sentry, Supabase keys.                                                                       |
+| `zopkit/prod/crm`     | crm     | DB URL, JWTs, wrapper/FA service tokens, Brevo, SES webhook secret, Anthropic, Google/MS/Slack/Cloudinary integration creds.                                    |
+| `zopkit/prod/fa`      | fa      | DB URL, JWT/refresh secrets, wrapper API/fetch tokens, internal/SSE/bootstrap secrets, tax/tenant encryption keys, Anthropic, FX API, SMTP, Temporal key, CORS. |
+| `…-valkey` (by ARN)   | infra   | Auto-populated by Terraform (`REDIS_URL`, `REDIS_PASSWORD`, TLS) — **do not edit**.                                                                             |
+
 
 > **AWS credentials are intentionally NOT in these secrets** — pods get AWS
 > access via **IRSA** (the per-app IAM role annotated on the ServiceAccount).
@@ -177,11 +185,13 @@ populating, delete the synced k8s Secret (ESO recreates it) or annotate the
 The three backend images come from three different repos. ECR repo URLs are in
 `terraform output -json ecr_repository_urls` (keyed by repo name).
 
-| App     | Backend dir              | ECR repo key     |
-|---------|--------------------------|------------------|
-| wrapper | `../backend`             | `wrapper-backend`|
-| crm     | `../../b2b-crm/server`   | `crm-backend`    |
-| fa      | `../../finance-accounting` | `fa-backend`   |
+
+| App     | Backend dir                | ECR repo key      |
+| ------- | -------------------------- | ----------------- |
+| wrapper | `../backend`               | `wrapper-backend` |
+| crm     | `../../b2b-crm/server`     | `crm-backend`     |
+| fa      | `../../finance-accounting` | `fa-backend`      |
+
 
 > ECR repos are `IMMUTABLE` — you cannot overwrite a tag. Use the git SHA (the
 > CI workflow uses `$GITHUB_SHA`) or another unique tag per build.
@@ -216,8 +226,7 @@ same with the `app→dir` map baked in.
 The chart is a single generic chart (`helm/zopkit-backend`) parameterized by the
 per-app `values-<app>.yaml`. The fields that depend on Terraform — image repo,
 the non-secret env map, the IRSA role ARN, the ExternalSecret remote ref, and the
-ingress host + ALB cert ARN — are injected from `terraform output -json
-app_wiring`.
+ingress host + ALB cert ARN — are injected from `terraform output -json app_wiring`.
 
 `app_wiring` shape (per app):
 
@@ -314,10 +323,10 @@ aws cloudfront create-invalidation --distribution-id <DIST_ID> --paths '/*'
 DNS split:
 
 - `app.zopkit.com`, `crm.zopkit.com`, `accounting.zopkit.com` → **CloudFront**,
-  created by **Terraform** (`route53_acm.tf` alias records).
+created by **Terraform** (`route53_acm.tf` alias records).
 - `api.zopkit.com`, `crm-api.zopkit.com`, `accounting-api.zopkit.com`, and the
-  wrapper `*.zopkit.com` wildcard → **the ALB**, published by **external-dns**
-  from the Helm Ingress objects. Terraform does **not** create these.
+wrapper `*.zopkit.com` wildcard → **the ALB**, published by **external-dns**
+from the Helm Ingress objects. Terraform does **not** create these.
 
 CloudFront returns `index.html` (HTTP 200) for 403/404 so client-side routing
 works.
@@ -329,31 +338,31 @@ works.
 These are encoded in the per-app `values-*.yaml` and `locals.tf` — **honor them.**
 
 - **wrapper — scales + HPA OK.** Background jobs use Postgres `pg_try_advisory_lock`
-  (leader-safe), so the web Deployment may scale (HPA min 3 / max 10). It **requires**:
+(leader-safe), so the web Deployment may scale (HPA min 3 / max 10). It **requires**:
   - **Valkey** for cache coherence — the permission/auth caches invalidate
-    fleet-wide via Valkey; without it, scaled pods serve stale `ctx.permissions`.
+  fleet-wide via Valkey; without it, scaled pods serve stale `ctx.permissions`.
   - **ALB stickiness** for `/ws` — the WebSocket registry is **pod-local**, so
-    sticky sessions (`stickiness.enabled=true`, 24h cookie) are set on the
-    wrapper Ingress (`ingress.websocket: true`).
+  sticky sessions (`stickiness.enabled=true`, 24h cookie) are set on the
+  wrapper Ingress (`ingress.websocket: true`).
 - **CRM — PINNED `replicaCount: 1`, HPA disabled.** `crmOutboxPoller` starts on
-  every pod with **no leader election** and its `getUnpublished()` lacks
-  `FOR UPDATE SKIP LOCKED`, so N pods **double-publish** to EventBridge.
-  **DO NOT enable HPA** until the poller is leader-gated (advisory lock) or split
-  into a single-replica worker Deployment.
+every pod with **no leader election** and its `getUnpublished()` lacks
+`FOR UPDATE SKIP LOCKED`, so N pods **double-publish** to the `business-events` SNS topic.
+**DO NOT enable HPA** until the poller is leader-gated (advisory lock) or split
+into a single-replica worker Deployment.
 - **FA — PINNED `replicaCount: 1`, HPA disabled.** `faOutboxPoller` *plus*
-  several unguarded `setInterval` cron managers (subscription/credit expiry, sync
-  monitors, prune jobs) run on every web pod with no leader election → duplicate
-  publishes and duplicate sweeps under scale-out. **DO NOT enable HPA** for FA web
-  until all of those are leader-gated. **CI must never pass
-  `--set autoscaling.enabled=true` to crm or fa.**
+several unguarded `setInterval` cron managers (subscription/credit expiry, sync
+monitors, prune jobs) run on every web pod with no leader election → duplicate
+publishes and duplicate sweeps under scale-out. **DO NOT enable HPA** for FA web
+until all of those are leader-gated. **CI must never pass
+`--set autoscaling.enabled=true` to crm or fa.**
 - **FA SQS consumer — separate, idempotent, may scale.** Deployed as a Helm
-  `worker` (`node dist/scripts/accounting-sqs-consumer-runner.js`). It is
-  idempotent via `processed_mq_events` and owns the `sqs-accounting` heartbeat, so
-  it is safe to run >1 replica — kept at 1 to start.
+`worker` (`node dist/scripts/accounting-sqs-consumer-runner.js`). It is
+idempotent via `processed_mq_events` and owns the `sqs-accounting` heartbeat, so
+it is safe to run >1 replica — kept at 1 to start.
 - **PgBouncer strongly recommended.** Each pod opens ~65 Postgres connections.
-  `N` pods × 65 will exhaust Supabase's connection limit fast — point every
-  `DATABASE_URL` at a pooled / transaction-pooler endpoint, especially once
-  wrapper scales out.
+`N` pods × 65 will exhaust Supabase's connection limit fast — point every
+`DATABASE_URL` at a pooled / transaction-pooler endpoint, especially once
+wrapper scales out.
 
 ---
 
@@ -396,7 +405,7 @@ terraform -chdir=terraform destroy
 ```
 
 > **Data warning:** `destroy` removes ElastiCache, Cognito (user pool + all
-> users), SQS/SNS/EventBridge, and the S3 buckets. Supabase Postgres is external
+> users), SNS/SQS, and the S3 buckets. Supabase Postgres is external
 > and is **not** touched. Snapshot/export anything you need first. Secrets
 > Manager secrets have a 7-day recovery window.
 
@@ -404,12 +413,15 @@ terraform -chdir=terraform destroy
 
 ## Quick reference
 
-| Need                         | Command                                                       |
-|------------------------------|--------------------------------------------------------------|
-| kubectl context              | `terraform -chdir=terraform output -raw configure_kubectl`    |
-| ECR URLs                     | `terraform -chdir=terraform output -json ecr_repository_urls` |
-| All Helm wiring              | `terraform -chdir=terraform output -json app_wiring`          |
+
+| Need                         | Command                                                                                   |
+| ---------------------------- | ----------------------------------------------------------------------------------------- |
+| kubectl context              | `terraform -chdir=terraform output -raw configure_kubectl`                                |
+| ECR URLs                     | `terraform -chdir=terraform output -json ecr_repository_urls`                             |
+| All Helm wiring              | `terraform -chdir=terraform output -json app_wiring`                                      |
 | Cognito pool id / clients    | `terraform -chdir=terraform output cognito_user_pool_id` / `cognito_user_pool_client_ids` |
-| Valkey endpoint / secret arn | `terraform -chdir=terraform output valkey_primary_endpoint` / `valkey_secret_arn` |
-| Render values                | `./scripts/render-values.sh <app> <tag>`                      |
-| Build + push + deploy        | `make build-<app> push-<app> deploy-<app>` (see `Makefile`)   |
+| Valkey endpoint / secret arn | `terraform -chdir=terraform output valkey_primary_endpoint` / `valkey_secret_arn`         |
+| Render values                | `./scripts/render-values.sh <app> <tag>`                                                  |
+| Build + push + deploy        | `make build-<app> push-<app> deploy-<app>` (see `Makefile`)                               |
+
+

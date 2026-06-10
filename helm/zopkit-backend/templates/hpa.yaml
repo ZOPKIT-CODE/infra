@@ -3,7 +3,7 @@
 
   Only rendered when .Values.autoscaling.enabled is true. This MUST stay
   DISABLED (autoscaling.enabled=false) for the leader-unsafe apps — crm and fa —
-  whose EventBridge outbox pollers/cron managers have no leader election or
+  whose business-events SNS outbox pollers/cron managers have no leader election or
   SKIP LOCKED, so running >1 web replica double-publishes. Only wrapper
   (pg advisory locks => leader-safe, Valkey-backed cache coherence) may scale.
 

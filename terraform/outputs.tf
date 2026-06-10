@@ -87,6 +87,11 @@ output "cognito_issuer_url" {
   value = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.this.id}"
 }
 
+output "cognito_platform_admin_group" {
+  description = "Cognito group name for internal platform admins (cross-tenant plane)."
+  value       = aws_cognito_user_group.platform_admins.name
+}
+
 # --- Storage / CDN ---
 output "s3_bucket_names" {
   value = { for k, b in aws_s3_bucket.buckets : k => b.id }
@@ -138,8 +143,10 @@ output "app_wiring" {
           COGNITO_CLIENT_ID    = aws_cognito_user_pool_client.clients[app].id
           COGNITO_ISSUER_URL   = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.this.id}"
           COGNITO_DOMAIN       = "https://${aws_cognito_user_pool_domain.this.domain}.auth.${var.aws_region}.amazoncognito.com"
-          BASE_DOMAIN          = var.root_domain
-          REDIS_ENABLED        = "true"
+          # Platform-admin plane: backend reads this group from the cognito:groups claim.
+          COGNITO_PLATFORM_ADMIN_GROUP = aws_cognito_user_group.platform_admins.name
+          BASE_DOMAIN                  = var.root_domain
+          REDIS_ENABLED                = "true"
           # Backend-mediated OAuth: BACKEND_URL drives the redirect_uri the app sends to
           # Cognito on both /authorize and /oauth2/token, and must match a registered
           # callback (the API host) exactly. FRONTEND_URL is the SPA origin (CORS/return).
@@ -164,13 +171,13 @@ output "app_wiring" {
           ACCOUNTING_APP_URL              = "https://${local.fqdn["fa"].frontend}"
         } : {},
         app == "crm" ? {
-          PORT                  = tostring(cfg.port)
-          SQS_INBOUND_QUEUE_URL = aws_sqs_queue.main["crm_events"].url
-          SQS_INBOUND_REGION    = var.aws_region
+          PORT                   = tostring(cfg.port)
+          SQS_INBOUND_QUEUE_URL  = aws_sqs_queue.main["crm_events"].url
+          SQS_INBOUND_REGION     = var.aws_region
           AWS_S3_BUCKET_NAME     = aws_s3_bucket.buckets["crm_attachments"].id
           SNS_BUSINESS_TOPIC_ARN = aws_sns_topic.topics["business_events"].arn
           WRAPPER_API_URL        = "https://${local.fqdn["wrapper"].api}"
-          CORS_ORIGINS          = "https://${local.fqdn["crm"].frontend}"
+          CORS_ORIGINS           = "https://${local.fqdn["crm"].frontend}"
         } : {},
         app == "fa" ? {
           SERVER_PORT                   = tostring(cfg.port)

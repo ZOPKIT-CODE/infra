@@ -61,3 +61,16 @@ enable_ci_oidc = false
 # ECR repos are shared (not env-prefixed) and owned by the staging/default workspace.
 # Prod references the same images rather than recreating the repos.
 manage_ecr = false
+
+# --- PROD RDS (dedicated, private instance in the prod VPC) ---
+# Cutover off Supabase. Private (publicly_accessible=false → intra subnets, reach
+# via SSM bastion), prod-grade (deletion protection + final snapshot). Mathesar is
+# NOT deployed in prod (enable_mathesar defaults false — no public DB UI).
+enable_rds              = true
+rds_publicly_accessible = false
+rds_admin_cidrs         = []
+rds_instance_class      = "db.t4g.small"
+rds_deletion_protection = true
+rds_skip_final_snapshot = false
+
+enable_mathesar         = false   # NO public DB UI in prod

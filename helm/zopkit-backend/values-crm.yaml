@@ -1,7 +1,7 @@
 # CRM backend — port 4000.
 # NOT leader-safe: crmOutboxPoller starts on every pod with no leader election and
-# getUnpublished() lacks FOR UPDATE SKIP LOCKED => N pods double-publish to
-# EventBridge. PINNED to replicaCount=1 / autoscaling off until the poller is
+# getUnpublished() lacks FOR UPDATE SKIP LOCKED => N pods double-publish to the
+# business-events SNS topic. PINNED to replicaCount=1 / autoscaling off until the poller is
 # leader-gated (advisory lock) or split into a single-replica worker Deployment.
 app: crm
 fullnameOverride: crm   # resources named "crm"/"crm-secret"/"crm-env"

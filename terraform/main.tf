@@ -64,7 +64,7 @@ module "eks" {
 
   eks_managed_node_group_defaults = {
     ami_type      = "AL2023_x86_64_STANDARD"
-    capacity_type = "ON_DEMAND"
+    capacity_type = var.node_capacity_type # ON_DEMAND (prod) | SPOT (staging/dev — ~70% cheaper)
   }
 
   eks_managed_node_groups = {

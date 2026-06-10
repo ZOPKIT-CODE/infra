@@ -27,7 +27,7 @@ environment = "prod"
 # Regions
 # -----------------------------------------------------------------------------
 # Primary region for the VPC, EKS cluster, ALB, the PRIMARY-region ACM cert,
-# Valkey/ElastiCache, SNS/SQS/EventBridge, ECR, and (by default) all S3 buckets.
+# Valkey/ElastiCache, SNS/SQS, ECR, and (by default) all S3 buckets.
 aws_region = "us-east-1"
 
 # Data region for CRM/FA SES sending and any future split of crm/fa S3 storage

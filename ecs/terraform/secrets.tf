@@ -22,6 +22,11 @@ locals {
     wrapper = [
       "DATABASE_URL",
       "DATABASE_URL_READ",
+      # Privileged migrator role URL — used ONLY by the one-off `run-migrations.js`
+      # task (reads MIGRATION_DATABASE_URL first). On least-privilege RDS, DATABASE_URL
+      # (app_user) is DML-only and cannot create/own __drizzle_migrations, so the
+      # migration must run as the migrator role. The long-running app ignores this key.
+      "MIGRATION_DATABASE_URL",
       "JWT_SECRET",
       "JWT_SECRET_PREVIOUS",
       "SESSION_SECRET",
