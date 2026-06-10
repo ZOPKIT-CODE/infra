@@ -68,6 +68,10 @@ resource "aws_elasticache_replication_group" "valkey" {
   node_type      = var.valkey_node_type
   port           = 6379
 
+  # Apply modifications (e.g. node_type resizes) as a rolling change NOW rather
+  # than silently deferring to the weekly maintenance window.
+  apply_immediately = true
+
   # 1 primary + N replicas.
   num_cache_clusters = 1 + var.valkey_replicas
 

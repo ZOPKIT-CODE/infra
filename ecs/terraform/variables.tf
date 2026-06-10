@@ -115,9 +115,13 @@ variable "service_memory_overrides" {
 
 # --- ElastiCache Valkey ---
 variable "valkey_node_type" {
+  # t4g.micro: the suite's auth/permission caches are tiny and low-traffic
+  # (~hundreds of ops/day, <1% CPU/mem observed on medium) — micro is ample
+  # headroom even for the full 6-app fleet. Downsized from t4g.medium 2026-06-10
+  # (~$119/mo saved across both envs).
   description = "ElastiCache (Valkey) node type."
   type        = string
-  default     = "cache.t4g.medium"
+  default     = "cache.t4g.micro"
 }
 
 variable "valkey_replicas" {
