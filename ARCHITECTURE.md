@@ -82,7 +82,7 @@ flowchart TB
 | **ALB** | Internet on port **443** |
 | **Fargate task** | **Only the ALB** on port 3000 — not the Internet directly |
 | **Valkey** | **Only Fargate tasks** on port 6379 |
-| **Public IP on task** | Used for **outbound** (ECR pull, Supabase, AWS APIs) — inbound is blocked by SG |
+| **Public IP on task** | Used for **outbound** (ECR pull, RDS, AWS APIs) — inbound is blocked by SG |
 
 **Why no NAT in staging:** cheaper. Tasks sit in **public subnets** with a public IP and egress via IGW. Production should use **private subnets + NAT** (`fargate_assign_public_ip = false`).
 
@@ -96,7 +96,7 @@ flowchart TB
 flowchart LR
   api["Fargate wrapper-web"]
 
-  db[("Supabase Postgres<br/>IPv4 pooler")]
+  db[("AWS RDS<br/>PostgreSQL 15")]
   msg["SNS to SQS<br/>16 queues + DLQs"]
   auth["Cognito<br/>login + Google"]
   media[("S3 dev bucket<br/>logos / blog media")]
@@ -111,7 +111,7 @@ flowchart LR
 
 | Service | Purpose in staging |
 |---------|-------------------|
-| **Supabase** | Shared **dev** Postgres via pooler (`aws-0-ap-south-1.pooler.supabase.com`) |
+| **AWS RDS** | Private PostgreSQL 15 (`zopkit-staging-db`); creds from Secrets Manager. See `ecs/DB_ACCESS.md` |
 | **SNS → SQS** | Event bus to CRM/FA (queues exist; consumers deploy later) |
 | **Cognito** | Shared pool `zopkit-platform` + Google OAuth |
 | **S3** | Shared dev bucket `wrapper-tenant-logos` |
@@ -141,7 +141,7 @@ flowchart TB
 
   subgraph aws["AWS + external"]
     cognito["Cognito"]
-    supa[("Supabase")]
+    supa[("AWS RDS")]
     sns["SNS/SQS"]
     s3data["S3 media"]
     sm["Secrets Manager"]
@@ -241,7 +241,7 @@ sequenceDiagram
 | Running service | `zopkit-staging-wrapper-web` (1 task) |
 | Frontend | `app.staging.zopkit.com` → CloudFront `E34U1BABF6H31O` → S3 `zopkit-staging-wrapper-fe` |
 | API | `api.staging.zopkit.com` → ALB → Fargate `:3000` |
-| DB | Dev Supabase (IPv4 pooler) |
+| DB | AWS RDS PostgreSQL 15 (`zopkit-staging-db`, private) |
 | Auth | Cognito `us-east-1_6e8AY4eMj` + Google |
 | Messaging | SNS ×3 → SQS ×16 (+ DLQs) |
 | Tracing | Sentry org `zopkit-cg` |
