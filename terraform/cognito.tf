@@ -135,3 +135,23 @@ resource "aws_cognito_user_pool_client" "clients" {
   # Don't leak whether a username exists on failed auth.
   prevent_user_existence_errors = "ENABLED"
 }
+
+# ---------------------------------------------------------------------------
+# Platform-admin group
+# ---------------------------------------------------------------------------
+# The PLATFORM plane (internal operators who manage platform staff and operate
+# cross-tenant) is signalled by membership of this group, surfaced in tokens via
+# the native `cognito:groups` claim. This is intentionally NOT a tenant DB role:
+# `isSuperAdmin` is tenant-scoped and every tenant founder has it, so it must
+# never confer cross-tenant access. The backend reads this group name from
+# COGNITO_PLATFORM_ADMIN_GROUP (default "platform-admins").
+#
+# Seat the first admin via PLATFORM_ADMIN_BOOTSTRAP_EMAILS (break-glass) or by
+# adding them to this group (AWS console / adminAddUserToGroup), then manage the
+# rest through group membership.
+resource "aws_cognito_user_group" "platform_admins" {
+  name         = var.cognito_platform_admin_group
+  user_pool_id = aws_cognito_user_pool.this.id
+  description  = "Internal platform administrators (cross-tenant plane). Distinct from tenant admins."
+  precedence   = 1
+}
