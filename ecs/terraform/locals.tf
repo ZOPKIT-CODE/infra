@@ -284,6 +284,8 @@ locals {
       SNS_BUSINESS_TOPIC_ARN = aws_sns_topic.topics["business_events"].arn
       WRAPPER_API_URL        = "https://${local.fqdn["wrapper"].api}"
       CORS_ORIGINS           = "https://${local.fqdn["crm"].frontend}"
+      # CRM's @fastify/cors reads CLIENT_URL (CORS_ORIGINS kept for forward-compat)
+      CLIENT_URL             = "https://${local.fqdn["crm"].frontend}"
     })
     fa = merge(local.service_env_common["fa"], {
       SERVER_PORT                   = "3002"

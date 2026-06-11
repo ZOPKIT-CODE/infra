@@ -121,12 +121,17 @@ resource "aws_lb_listener" "http" {
 # Wrapper tenant-vanity wildcard rule. The wrapper service must serve both
 # api.<root> (its own module-created rule at priority 10) AND *.<root> tenant
 # hosts. Rather than widen the module's host_header condition, attach a
-# dedicated catch-all rule here (priority 11) forwarding *.<root> to wrapper's
+# dedicated catch-all rule here forwarding *.<root> to wrapper's
 # target group. (`aws_route53_record.tenant_wildcard` aliases *.<root> -> ALB.)
+#
+# PRIORITY MUST SIT AFTER EVERY APP RULE (wrapper 10 / crm 20 / fa 30): at its
+# old value (11) the wildcard swallowed crm-api.<root>/accounting-api.<root>
+# before their host rules could match — every CRM API call was answered by
+# WRAPPER (broken CORS, wrong app) while crm-web sat healthy and unreachable.
 # ---------------------------------------------------------------------------
 resource "aws_lb_listener_rule" "tenant_wildcard" {
   listener_arn = aws_lb_listener.https.arn
-  priority     = 11
+  priority     = 90
 
   action {
     type             = "forward"
