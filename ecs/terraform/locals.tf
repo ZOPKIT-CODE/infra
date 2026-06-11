@@ -216,6 +216,10 @@ locals {
   service_env_common = {
     for app, cfg in local.apps : app => {
       NODE_ENV                    = "production"
+      # Honest telemetry labels: NODE_ENV is 'production' in BOTH envs' images,
+      # which filed staging's Sentry events under environment:production.
+      # Backends read SENTRY_ENVIRONMENT first (PR #28).
+      SENTRY_ENVIRONMENT          = var.environment
       BYPASS_TRIAL_RESTRICTIONS   = tostring(var.bypass_trial_restrictions)
       AWS_REGION                  = var.aws_region
       COGNITO_REGION              = var.aws_region
