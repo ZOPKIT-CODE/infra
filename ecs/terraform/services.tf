@@ -42,7 +42,8 @@ module "services" {
   container_port = each.value.container_port
   command        = each.value.command
 
-  environment = local.service_env[each.value.app]
+  # Per-app env, plus per-service overrides (e.g. PROCESS_ROLE web/worker for crm).
+  environment = merge(local.service_env[each.value.app], each.value.extra_env)
   secrets     = local.service_secrets[each.value.app]
 
   execution_role_arn = aws_iam_role.execution.arn

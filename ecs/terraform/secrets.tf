@@ -48,6 +48,7 @@ locals {
 
     crm = [
       "DATABASE_URL",
+      "MIGRATION_DATABASE_URL", # privileged (migrator role) — one-off migrate task only; app uses least-privilege DATABASE_URL
       "JWT_SECRET",
       "JWT_SECRET_PREVIOUS",
       "WRAPPER_SERVICE_TOKEN",
@@ -68,6 +69,7 @@ locals {
 
     fa = [
       "DATABASE_URL",
+      "MIGRATION_DATABASE_URL", # privileged (migrator role) — one-off migrate task only; app uses least-privilege DATABASE_URL
       "JWT_SECRET",
       "JWT_REFRESH_SECRET",
       "JWT_SECRET_PREVIOUS",

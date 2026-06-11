@@ -117,6 +117,9 @@ resource "aws_cognito_user_pool_client" "clients" {
   callback_urls = [
     "https://${local.fqdn[each.key].api}/api/auth/callback",
     "https://${local.fqdn[each.key].frontend}",
+    # SPA-side PKCE (CRM login + the cross-app silent-SSO prompt=none flow):
+    # the browser exchanges the code itself; redirect_uri must byte-match.
+    "https://${local.fqdn[each.key].frontend}/login/callback",
   ]
   logout_urls = [
     "https://${local.fqdn[each.key].frontend}",
