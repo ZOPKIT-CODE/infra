@@ -194,3 +194,31 @@ resource "aws_cloudwatch_metric_alarm" "dlq_not_empty" {
     App  = each.value.app
   }
 }
+
+# FA is parked: nothing consumes accounting-events, so wrapper's emissions sit
+# in the queue against SQS's HARD 14-day retention. Alarm well before expiry —
+# losing the backlog means hand-backfilling FA from the wrapper outbox later.
+resource "aws_cloudwatch_metric_alarm" "accounting_backlog_expiry" {
+  alarm_name          = "${local.name_prefix}-accounting-events-nearing-expiry"
+  alarm_description   = "Oldest accounting-events message is > 11 days old; SQS silently drops it at 14. Start the FA consumer (or replay from wrapper outbox) before the backlog evaporates."
+  namespace           = "AWS/SQS"
+  metric_name         = "ApproximateAgeOfOldestMessage"
+  statistic           = "Maximum"
+  period              = 3600
+  evaluation_periods  = 1
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 950400 # 11 days in seconds (queue retention is 14d)
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    QueueName = "${local.name_prefix}-accounting-events"
+  }
+
+  alarm_actions = [aws_sns_topic.ops_alarms.arn]
+  ok_actions    = [aws_sns_topic.ops_alarms.arn]
+
+  tags = {
+    Name = "${local.name_prefix}-accounting-events-nearing-expiry"
+    App  = "fa"
+  }
+}
