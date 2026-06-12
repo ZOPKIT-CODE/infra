@@ -74,3 +74,6 @@ rds_deletion_protection = true
 rds_skip_final_snapshot = false
 
 enable_mathesar         = false   # NO public DB UI in prod
+
+# Ops alarms (DLQ-not-empty etc.) — confirm the SNS subscription from the inbox after apply.
+alarm_email = "zopkitrock@gmail.com"

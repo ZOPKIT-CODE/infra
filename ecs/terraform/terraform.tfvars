@@ -19,7 +19,8 @@ single_nat_gateway       = true # ignored when fargate_assign_public_ip=true (no
 
 # image_tag stays "latest" until the first push; deploy-service.sh sets immutable
 # per-service SHA tags via image-tags.auto.tfvars.json.
-# alarm_email = ""   # set to route DLQ / ops alarms to an inbox
+# Ops alarms (DLQ-not-empty etc.) — confirm the SNS subscription from the inbox after apply.
+alarm_email = "zopkitrock@gmail.com"
 
 # Reuse the shared zopkit-platform Cognito pool (Google federation + clients already set up)
 cognito_user_pool_id           = "us-east-1_6e8AY4eMj"

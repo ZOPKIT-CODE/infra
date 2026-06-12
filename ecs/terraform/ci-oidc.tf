@@ -109,6 +109,12 @@ data "aws_iam_policy_document" "github_deploy" {
     actions   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation", "cloudfront:GetDistribution", "cloudfront:ListDistributions"]
     resources = ["*"]
   }
+  statement {
+    sid       = "DeployedTagParams"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter", "ssm:PutParameter"]
+    resources = ["arn:aws:ssm:${var.aws_region}:${local.account_id}:parameter/${var.project}/*/deployed-tag/*"]
+  }
   # Read-only access terraform's refresh needs across the rest of the stack.
   statement {
     sid    = "RefreshReadOnly"

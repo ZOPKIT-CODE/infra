@@ -68,10 +68,13 @@ Then populate **Secrets Manager** per app: `DATABASE_URL`, Cognito vars,
 
 ### Per-service image tags
 `services.tf` resolves each service's image as
-`…:${lookup(var.service_image_tags, <service>, var.image_tag)}`. The deploy
-script writes the chosen SHA into **`image-tags.auto.tfvars.json`** (committed —
-it's the record of what's live) so you can roll out one app without rebuilding
-the others.
+`…:${try(var.service_image_tags[<service>], data.aws_ssm_parameter.deployed_tag[<service>].value)}`.
+The record of what's live is **SSM Parameter Store**
+(`/<project>/<env>/deployed-tag/<service>`), written by every release path
+*before* its apply — so a secrets roll or full apply from any checkout
+preserves what is actually running. Git holds no tag record (a committed one
+went stale and rolled staging CRM back four commits, 2026-06-12). Emergency
+pin / bootstrap: pass `-var='service_image_tags={"crm-web"="<sha>"}'`.
 
 ---
 
@@ -222,7 +225,8 @@ node scripts/db/check-journal.mjs && npx vitest run && \
 ./deploy-service.sh wrapper-web <previous-sha>
 
 # what's currently live
-cat deploy/ecs/terraform/image-tags.auto.tfvars.json
+aws ssm get-parameters-by-path --path /zopkit/staging/deployed-tag \
+  --query 'Parameters[].[Name,Value]' --output table
 ```
 
 Service names: `wrapper-web` `crm-web` `fa-web` `fa-consumer` ·

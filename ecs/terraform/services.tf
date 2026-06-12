@@ -18,6 +18,20 @@
 # (ECS rejects a key appearing in both blocks).
 # ---------------------------------------------------------------------------
 
+# The deployed tag for each service lives in SSM Parameter Store
+# (/<project>/<env>/deployed-tag/<service>), written by every release path
+# BEFORE its apply (CI deploy.yml, deploy-service.sh). Terraform reads the
+# LIVE value at plan time, so unrelated applies can never roll a service back
+# to a stale tag. Git holds no tag record anymore: the old
+# image-tags.auto.tfvars.json went stale silently (dispatched releases could
+# not push to the protected main) and a secrets roll downgraded staging CRM
+# four commits (2026-06-12). Bootstrap of a brand-new service: create the
+# parameter first (the deploy paths do) or pass -var='service_image_tags={...}'.
+data "aws_ssm_parameter" "deployed_tag" {
+  for_each = { for k, v in local.services : k => v if v.enabled && !contains(keys(var.service_image_tags), k) }
+  name     = "/${var.project}/${var.environment}/deployed-tag/${each.key}"
+}
+
 module "services" {
   source = "./modules/ecs-service"
   # Only stand up services flagged enabled (gradual rollout: wrapper now, CRM/FA
@@ -33,9 +47,10 @@ module "services" {
   aws_region   = var.aws_region
 
   # --- Task definition ---
-  # Per-service tag override (service_image_tags["wrapper-web"] = "<sha>") falls
-  # back to the global var.image_tag — lets you roll out one app at a time.
-  image  = "${local.ecr_repo_urls[each.value.ecr_repo]}:${lookup(var.service_image_tags, each.key, var.image_tag)}"
+  # Tag resolution: explicit -var override wins (emergency pin / bootstrap),
+  # otherwise the LIVE deployed tag from SSM (see data source above) — so a
+  # secrets roll or full apply from ANY checkout preserves what is running.
+  image  = "${local.ecr_repo_urls[each.value.ecr_repo]}:${try(var.service_image_tags[each.key], data.aws_ssm_parameter.deployed_tag[each.key].value)}"
   cpu    = each.value.cpu
   memory = each.value.memory
 
