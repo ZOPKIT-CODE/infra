@@ -39,6 +39,20 @@ source "$SCRIPT_DIR/deploy.env"
 : "${TASK_SG:?set in deploy.env}"              # security group id for the migration task
 TASK_ASSIGN_PUBLIC_IP="${TASK_ASSIGN_PUBLIC_IP:-DISABLED}"  # ENABLED for public-subnet/no-NAT setups
 
+# ---- derive environment from NAME_PREFIX (e.g. zopkit-prod → prod) ----------
+DEPLOY_ENV="${NAME_PREFIX#*-}"   # "prod" | "staging" | ...
+case "$DEPLOY_ENV" in
+  prod)
+    TF_WORKSPACE="prod"
+    TF_VARFILE="$TF_DIR/terraform.prod.tfvars"
+    [[ -f "$TF_VARFILE" ]] || { echo "✖ Missing $TF_VARFILE — cannot deploy to prod without it"; exit 1; }
+    ;;
+  staging|*)
+    TF_WORKSPACE="default"
+    TF_VARFILE=""
+    ;;
+esac
+
 SERVICE="${1:-}"
 [[ -n "$SERVICE" ]] || { echo "Usage: $0 <wrapper-web|crm-web|crm-worker|fa-web|fa-consumer> [image_tag]"; exit 1; }
 
@@ -115,7 +129,11 @@ echo "▶ [3/6] record tag in SSM + terraform apply…"
 aws ssm put-parameter \
   --name "/${NAME_PREFIX%%-*}/${NAME_PREFIX#*-}/deployed-tag/${SERVICE}" \
   --value "$TAG" --type String --overwrite --region "$AWS_REGION" > /dev/null
-( cd "$TF_DIR" && terraform apply -auto-approve -target="module.services[\"$SERVICE\"]" )
+( cd "$TF_DIR" && \
+  terraform workspace select "$TF_WORKSPACE" && \
+  TF_ARGS=(-auto-approve -target="module.services[\"$SERVICE\"]") && \
+  [[ -n "$TF_VARFILE" ]] && TF_ARGS+=(-var-file="$TF_VARFILE") || true && \
+  terraform apply "${TF_ARGS[@]}" )
 
 # ---- 4. migrate (web services only) — uses the new task def from step 3 -----
 if [[ "$MIGRATE" == "true" ]]; then
