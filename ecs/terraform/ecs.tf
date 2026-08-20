@@ -19,7 +19,7 @@ resource "aws_ecs_cluster" "this" {
 
   setting {
     name  = "containerInsights"
-    value = "enabled"
+    value = "disabled" # matches live state; re-enable deliberately if monitoring is wanted (cost impact)
   }
 
   tags = {

@@ -75,5 +75,10 @@ rds_skip_final_snapshot = false
 
 enable_mathesar         = false   # NO public DB UI in prod
 
+# Disabled during the no-real-users testing phase to stop paying for it (2 nodes,
+# ~$24/mo) - REDIS_ENABLED and REDIS_URL/PASSWORD secret injection drop for every
+# app so they take their no-cache path cleanly. Re-enable + apply to recreate.
+enable_valkey = false
+
 # Ops alarms (DLQ-not-empty etc.) — confirm the SNS subscription from the inbox after apply.
 alarm_email = "zopkitrock@gmail.com"

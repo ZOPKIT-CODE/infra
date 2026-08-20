@@ -206,3 +206,9 @@ variable "logo_bucket_override" {
   type        = string
   default     = ""
 }
+
+variable "enable_valkey" {
+  description = "Manage the shared Valkey (Redis-compatible) ElastiCache replication group. Set false to stop paying for it while no app hard-requires caching (e.g. a no-real-users testing phase) - REDIS_ENABLED and the REDIS_URL/REDIS_PASSWORD secret injection are dropped for every app when false, so apps degrade to no-cache rather than failing to find a missing secret. Re-enable and re-apply to recreate."
+  type        = bool
+  default     = true
+}

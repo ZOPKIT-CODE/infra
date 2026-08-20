@@ -57,12 +57,12 @@ output "sqs_dlq_urls" {
 
 # --- Cache ---
 output "valkey_primary_endpoint" {
-  value = aws_elasticache_replication_group.valkey.primary_endpoint_address
+  value = var.enable_valkey ? aws_elasticache_replication_group.valkey[0].primary_endpoint_address : null
 }
 
 output "valkey_secret_arn" {
   description = "Secrets Manager ARN holding the Valkey AUTH token + rediss:// URL."
-  value       = aws_secretsmanager_secret.valkey.arn
+  value       = var.enable_valkey ? aws_secretsmanager_secret.valkey[0].arn : null
 }
 
 # --- TLS ---

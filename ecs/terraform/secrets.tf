@@ -91,6 +91,35 @@ locals {
       "TEMPORAL_API_KEY",
       "CORS_ORIGINS",
     ]
+
+    lens = [
+      "DATABASE_URL",
+      "DIRECT_URL",
+      "MIGRATION_DATABASE_URL", # privileged (migrator role) — one-off migrate task only; app uses least-privilege DATABASE_URL
+      "DATABASE_SSL_CA", # Supabase's "Supabase Root 2021 CA" root cert (PEM), pinned for verify-full - see backend/db/index.ts
+      "JWT_SECRET",
+      # Cognito SSO (shared zopkit-platform pool; confidential lens app client —
+      # see backend/docs/COGNITO-SSO.md in the lens repo. Provisioned out-of-band, not Terraform).
+      "EXTERNAL_ISSUER_URL",
+      "EXTERNAL_OAUTH_DOMAIN",
+      "EXTERNAL_CLIENT_ID",
+      "EXTERNAL_CLIENT_SECRET",
+      "GOOGLE_CLIENT_ID",
+      "GOOGLE_CLIENT_SECRET",
+      "GOOGLE_STORAGE_CLIENT_ID",
+      "GOOGLE_STORAGE_CLIENT_SECRET",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_WEBHOOK_SECRET",
+      "STRIPE_PUBLISHABLE_KEY",
+      "RAZORPAY_KEY_ID",
+      "RAZORPAY_KEY_SECRET",
+      "RAZORPAY_WEBHOOK_SECRET",
+      "RESEND_API_KEY",
+      "BREVO_API_KEY",
+      "STORAGE_OAUTH_STATE_SECRET",
+      "STORAGE_TOKEN_ENCRYPTION_KEY",
+      "ADMIN_EMAILS",
+    ]
   }
 }
 

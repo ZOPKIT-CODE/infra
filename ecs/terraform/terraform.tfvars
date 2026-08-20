@@ -37,6 +37,18 @@ bypass_trial_restrictions = true
 # Reuse the shared dev logo/blog-media bucket (matches the shared dev DB image keys)
 logo_bucket_override = "wrapper-tenant-logos"
 
+# --- Valkey (ElastiCache) ---
+# Disabled during the no-real-users testing phase to stop paying for it
+# (~$12/mo/node) - REDIS_ENABLED and REDIS_URL/PASSWORD secret injection drop
+# for every app so they take their no-cache path cleanly. Re-enable + apply to
+# recreate whenever real caching is actually needed again.
+enable_valkey = false
+# Pre-launch cost trim: no replica. Single primary node is ample for staging's
+# tiny auth/permission cache traffic; drops the second t4g.micro (~$12/mo) and
+# auto-disables Multi-AZ/failover (both gated on valkey_replicas > 0). Bump back
+# to 1 for HA once staging carries real load. Default is 1.
+valkey_replicas = 0
+
 # --- RDS (staging trial: wrapper first) ---
 # One t4g.micro hosting per-app staging databases. publicly_accessible for dev
 # convenience, SG-locked to the ECS tasks + the admin IP below. Prod will use a

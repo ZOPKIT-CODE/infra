@@ -130,10 +130,10 @@ data "aws_iam_policy_document" "wrapper" {
     sid     = "SecretsRead"
     effect  = "Allow"
     actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      aws_secretsmanager_secret.app["wrapper"].arn,
-      aws_secretsmanager_secret.valkey.arn,
-    ]
+    resources = concat(
+      [aws_secretsmanager_secret.app["wrapper"].arn],
+      var.enable_valkey ? [aws_secretsmanager_secret.valkey[0].arn] : [],
+    )
   }
 }
 
@@ -223,10 +223,10 @@ data "aws_iam_policy_document" "crm" {
     sid     = "SecretsRead"
     effect  = "Allow"
     actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      aws_secretsmanager_secret.app["crm"].arn,
-      aws_secretsmanager_secret.valkey.arn,
-    ]
+    resources = concat(
+      [aws_secretsmanager_secret.app["crm"].arn],
+      var.enable_valkey ? [aws_secretsmanager_secret.valkey[0].arn] : [],
+    )
   }
 }
 
@@ -306,10 +306,10 @@ data "aws_iam_policy_document" "fa" {
     sid     = "SecretsRead"
     effect  = "Allow"
     actions = ["secretsmanager:GetSecretValue"]
-    resources = [
-      aws_secretsmanager_secret.app["fa"].arn,
-      aws_secretsmanager_secret.valkey.arn,
-    ]
+    resources = concat(
+      [aws_secretsmanager_secret.app["fa"].arn],
+      var.enable_valkey ? [aws_secretsmanager_secret.valkey[0].arn] : [],
+    )
   }
 }
 
@@ -317,6 +317,28 @@ resource "aws_iam_role_policy" "fa" {
   name   = "${local.name_prefix}-task-fa-policy"
   role   = aws_iam_role.task["fa"].id
   policy = data.aws_iam_policy_document.fa.json
+}
+
+# ---------- lens ---------------------------------------------------------
+# zopkit-lens is a standalone app (own Kinde auth, own Stripe/Razorpay, no
+# platform SNS/SQS bus, no shared S3 buckets). Least-privilege runtime grant
+# is just read access to its own app secret — no Valkey (lens doesn't use
+# Redis) and no Cognito (lens uses Kinde, not the suite's Cognito pool).
+data "aws_iam_policy_document" "lens" {
+  statement {
+    sid     = "SecretsRead"
+    effect  = "Allow"
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      aws_secretsmanager_secret.app["lens"].arn,
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "lens" {
+  name   = "${local.name_prefix}-task-lens-policy"
+  role   = aws_iam_role.task["lens"].id
+  policy = data.aws_iam_policy_document.lens.json
 }
 
 # =============================================================================
@@ -347,7 +369,7 @@ data "aws_iam_policy_document" "execution_secrets" {
     actions = ["secretsmanager:GetSecretValue"]
     resources = concat(
       [for k in keys(local.apps) : aws_secretsmanager_secret.app[k].arn],
-      [aws_secretsmanager_secret.valkey.arn],
+      var.enable_valkey ? [aws_secretsmanager_secret.valkey[0].arn] : [],
       # RDS rollout: master (db-admin provisioning task); mathesar secret only when deployed.
       var.enable_rds ? [aws_secretsmanager_secret.rds_master[0].arn] : [],
       var.enable_rds && var.enable_mathesar ? [aws_secretsmanager_secret.mathesar[0].arn] : [],

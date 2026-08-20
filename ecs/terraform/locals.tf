@@ -39,9 +39,14 @@ locals {
   # local.services map below — keeping cognito.tf's for_each = local.apps at three.
   # ----------------------------------------------------------------------------
   apps = {
-    wrapper = { ecr_repo = "wrapper-backend", port = 3000, api_subdomain = "api", frontend_subdomain = "app", tenant_wildcard = true }
-    crm     = { ecr_repo = "crm-backend", port = 4000, api_subdomain = "crm-api", frontend_subdomain = "crm", tenant_wildcard = false }
-    fa      = { ecr_repo = "fa-backend", port = 3002, api_subdomain = "accounting-api", frontend_subdomain = "accounting", tenant_wildcard = false }
+    wrapper = { ecr_repo = "wrapper-backend", port = 3000, api_subdomain = "api", frontend_subdomain = "app", tenant_wildcard = true, cdn_proxies_api = false }
+    crm     = { ecr_repo = "crm-backend", port = 4000, api_subdomain = "crm-api", frontend_subdomain = "crm", tenant_wildcard = false, cdn_proxies_api = false }
+    fa      = { ecr_repo = "fa-backend", port = 3002, api_subdomain = "accounting-api", frontend_subdomain = "accounting", tenant_wildcard = false, cdn_proxies_api = false }
+    # lens's frontend does bare relative fetch("/api/...") calls with no configurable API base
+    # URL (unlike wrapper/crm/fa) - it MUST be same-origin, so its CloudFront distribution needs
+    # to proxy /api/* to the backend ALB. wrapper/crm/fa are deliberately left false: unclear
+    # whether their frontends rely on this and untested here - don't change their live behavior.
+    lens    = { ecr_repo = "lens-backend", port = 3002, api_subdomain = "lens-api", frontend_subdomain = "lens", tenant_wildcard = false, cdn_proxies_api = true }
   }
 
   # ----------------------------------------------------------------------------
@@ -73,6 +78,7 @@ locals {
       min_count              = 1
       max_count              = 3
       listener_rule_priority = 10
+      health_check_grace_period_seconds = 60
     }
     "crm-web" = {
       enabled                = true # live in staging AND prod (crm.zopkit.com cut over 2026-06-11)
@@ -93,6 +99,7 @@ locals {
       min_count              = 1
       max_count              = 3
       listener_rule_priority = 20
+      health_check_grace_period_seconds = 60
     }
     "crm-worker" = {
       enabled                = true
@@ -113,6 +120,7 @@ locals {
       min_count              = 1
       max_count              = 1
       listener_rule_priority = null
+      health_check_grace_period_seconds = 60
     }
     "fa-web" = {
       enabled                = false # deployed gradually (flip to true when ready)
@@ -133,6 +141,7 @@ locals {
       min_count              = 1
       max_count              = 1
       listener_rule_priority = 30
+      health_check_grace_period_seconds = 60
     }
     "fa-consumer" = {
       enabled                = false # deployed gradually (flip to true when ready)
@@ -153,6 +162,30 @@ locals {
       min_count              = 1
       max_count              = 1
       listener_rule_priority = null
+      health_check_grace_period_seconds = 60
+    }
+    "lens-web" = {
+      enabled                = true # image pushed to ECR; running in dev-auth mode (no Kinde app registered yet)
+      app                    = "lens"
+      role                   = "lens"
+      ecr_repo               = "lens-backend"
+      cpu                    = 512
+      memory                 = 1024
+      container_port         = 3002
+      command                = []
+      extra_env              = {}
+      needs_alb              = true
+      host_header            = local.fqdn["lens"].api
+      health_check_path      = "/api/health" # NOT /api/health/ready — that pings the DB and flaps the target group
+      stickiness_enabled     = false
+      autoscaling_enabled    = true
+      desired_count          = 1
+      min_count              = 1
+      max_count              = 3
+      listener_rule_priority = 40
+      # Supabase project is in ap-northeast-1; the RBAC-bootstrap query sequence on cold
+      # start over that cross-region link takes ~100s, well past the shared 60s default.
+      health_check_grace_period_seconds = 240
     }
   }
 
@@ -193,6 +226,7 @@ locals {
     fe_wrapper      = { name = "${local.name_prefix}-wrapper-fe", region = var.aws_region, public = false }
     fe_crm          = { name = "${local.name_prefix}-crm-fe", region = var.aws_region, public = false }
     fe_fa           = { name = "${local.name_prefix}-fa-fe", region = var.aws_region, public = false }
+    fe_lens         = { name = "${local.name_prefix}-lens-fe", region = var.aws_region, public = false }
   }
 
   # Frontend SPA distributions: subdomain => bucket key in local.s3_buckets
@@ -200,6 +234,7 @@ locals {
     wrapper = { subdomain = "app", bucket = "fe_wrapper" }
     crm     = { subdomain = "crm", bucket = "fe_crm" }
     fa      = { subdomain = "accounting", bucket = "fe_fa" }
+    lens    = { subdomain = "lens", bucket = "fe_lens" }
   }
 
   fqdn = {
@@ -252,7 +287,7 @@ locals {
       COGNITO_ISSUER_URL          = "https://cognito-idp.${var.aws_region}.amazonaws.com/${local.cognito_pool_id}"
       COGNITO_DOMAIN              = "https://${local.cognito_domain_name}.auth.${var.aws_region}.amazoncognito.com"
       BASE_DOMAIN                 = var.root_domain
-      REDIS_ENABLED               = "true"
+      REDIS_ENABLED               = tostring(var.enable_valkey)
       BACKEND_URL                 = "https://${local.fqdn[app].api}"
       FRONTEND_URL                = "https://${local.fqdn[app].frontend}"
       COGNITO_REDIRECT_URI        = "https://${local.fqdn[app].api}/api/auth/callback"
@@ -275,6 +310,11 @@ locals {
       S3_LOGO_BUCKET                  = var.logo_bucket_override != "" ? var.logo_bucket_override : aws_s3_bucket.buckets["wrapper_logos"].id
       CRM_APP_URL                     = "https://${local.fqdn["crm"].frontend}"
       ACCOUNTING_APP_URL              = "https://${local.fqdn["fa"].frontend}"
+      # Public blog crawler-HTML (blog-prerender.ts): siteOrigin/mediaOrigin for
+      # og:url/og:image must resolve to the public marketing site + API domain,
+      # not whatever Host header the request arrived with.
+      BLOG_SITE_URL                   = "https://www.${var.root_domain}"
+      BLOG_PUBLIC_BASE_URL            = "https://${local.fqdn["wrapper"].api}"
     })
     crm = merge(local.service_env_common["crm"], {
       PORT                   = "4000"
@@ -298,6 +338,40 @@ locals {
       WRAPPER_API_URL               = "https://${local.fqdn["wrapper"].api}"
       CORS_ORIGINS                  = "https://${local.fqdn["fa"].frontend}"
     })
+    # lens is a standalone app: SSO via the shared zopkit-platform Cognito pool (its own
+    # confidential app client, provisioned out-of-band — see backend/docs/COGNITO-SSO.md
+    # in the lens repo), own Stripe/Razorpay, no platform SNS/SQS bus. service_env_common's
+    # COGNITO_*/REDIS_ENABLED keys are harmless-but-unused (lens's code never reads them) —
+    # lens's own Cognito wiring (EXTERNAL_*) comes from its app secret, not from here.
+    lens = merge(local.service_env_common["lens"], {
+      SERVER_PORT                     = "3002"
+      PORT                             = "3002"
+      CORS_ORIGINS                     = "https://${local.fqdn["lens"].frontend}"
+      PUBLIC_APP_ORIGIN                = "https://${local.fqdn["lens"].frontend}"
+      APP_PUBLIC_URL                   = "https://${local.fqdn["lens"].frontend}"
+      TENANT_RLS_ENABLED               = "true"
+      TENANT_HOST_SUFFIX               = local.fqdn["lens"].frontend
+      # Supabase's chain roots at their own "Supabase Root 2021 CA", not a publicly-trusted
+      # one - true here only works together with DATABASE_SSL_CA (below, in the app secret)
+      # pinning that root. Without it this crash-loops with SELF_SIGNED_CERT_IN_CHAIN
+      # (verified directly). See lens backend db/index.ts for the driver-side half of this.
+      DATABASE_SSL_REJECT_UNAUTHORIZED = "true"
+      JWT_EXPIRES_IN                   = "8h"
+      RATE_LIMIT_MAX                   = "2000"
+      WORKFLOW_CRON_ENABLED            = "true"
+      WORKFLOW_CRON_INTERVAL_MS        = "3600000"
+      # Resend is checked first by default (email-config.ts) and RESEND_API_KEY still holds the
+      # Terraform placeholder ("REPLACE_ME" — non-empty, so it reads as "configured"), so without
+      # this override the app picks Resend and fails instead of using the real Brevo key.
+      TRANSACTIONAL_EMAIL_PROVIDER     = "brevo"
+      BREVO_FROM_EMAIL                 = "platformadmin@zopkit.com" # verified sender in Brevo
+      BREVO_FROM_NAME                  = "Zopkit Lens"
+      # Real Cognito app client is provisioned and verified (callback URLs + Managed Login
+      # branding confirmed live). NODE_ENV=production is safe now — validate-production-env.ts
+      # requires EXTERNAL_ISSUER_URL/EXTERNAL_OAUTH_DOMAIN/EXTERNAL_CLIENT_ID/EXTERNAL_CLIENT_SECRET
+      # (from the app secret, see secrets.tf) and forbids ALLOW_DEV_AUTH in this mode.
+      NODE_ENV = "production"
+    })
   }
 
   # ----------------------------------------------------------------------------
@@ -310,7 +384,10 @@ locals {
   #             'environment' and 'secrets' blocks (ECS rejects duplicates). This
   #             drops e.g. fa's CORS_ORIGINS (it lives in env) from its secrets.
   # ----------------------------------------------------------------------------
-  valkey_secret_keys = ["REDIS_URL", "REDIS_PASSWORD"]
+  # Empty when disabled: no app's task definition asks ECS to resolve a REDIS_URL/
+  # REDIS_PASSWORD secret that no longer exists (would otherwise fail every future
+  # task launch, not just lose caching).
+  valkey_secret_keys = var.enable_valkey ? ["REDIS_URL", "REDIS_PASSWORD"] : []
 
   service_secret_keys = {
     for app, cfg in local.apps : app => [
@@ -325,7 +402,7 @@ locals {
     for app, cfg in local.apps : app => {
       for k in local.service_secret_keys[app] : k => (
         contains(local.valkey_secret_keys, k)
-        ? "${aws_secretsmanager_secret.valkey.arn}:${k}::"
+        ? "${aws_secretsmanager_secret.valkey[0].arn}:${k}::"
         : "${aws_secretsmanager_secret.app[app].arn}:${k}::"
       )
     }

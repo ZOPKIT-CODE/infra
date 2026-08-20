@@ -142,7 +142,7 @@ resource "aws_ecs_service" "this" {
     }
   }
 
-  health_check_grace_period_seconds = var.needs_alb ? 60 : null
+  health_check_grace_period_seconds = var.needs_alb ? var.health_check_grace_period_seconds : null
 
   depends_on = [aws_lb_listener_rule.this]
 

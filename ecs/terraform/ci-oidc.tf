@@ -10,6 +10,8 @@ variable "github_deploy_repos" {
     "ZOPKIT-CODE/Wrapper",
     "ZOPKIT-CODE/B2B-CRM",
     "ZOPKIT-CODE/Finance-Accounting",
+    "ursrudra/zopkit-lens",
+    "ZOPKIT-CODE/zopkit-lens",
   ]
 }
 
@@ -48,10 +50,20 @@ data "aws_iam_policy_document" "github_deploy_trust" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
+    # Match both the standard subject format (personal-account repos, e.g. ursrudra/zopkit-lens)
+    # and the ZOPKIT-CODE org's custom OIDC subject-claim template, which embeds numeric
+    # owner/repo IDs: "repo:ZOPKIT-CODE@<owner_id>/<repo>@<repo_id>:ref:...". Discovered via a
+    # temporary token-decode debug step after AssumeRoleWithWebIdentity kept failing for a newly
+    # trusted org repo - the plain "repo:${r}:*" pattern never matches the ID-suffixed form.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = [for r in var.github_deploy_repos : "repo:${r}:*"]
+      values = flatten([
+        for r in var.github_deploy_repos : [
+          "repo:${r}:*",
+          "repo:${split("/", r)[0]}@*/${split("/", r)[1]}@*:*",
+        ]
+      ])
     }
   }
 }

@@ -80,6 +80,7 @@ module "services" {
   host_header            = each.value.host_header
   health_check_path      = each.value.health_check_path
   stickiness_enabled     = each.value.stickiness_enabled
+  health_check_grace_period_seconds = each.value.health_check_grace_period_seconds
 
   # --- Autoscaling (wrapper-web only; others pinned) ---
   autoscaling_enabled = each.value.autoscaling_enabled

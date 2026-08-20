@@ -164,6 +164,12 @@ variable "deregistration_delay" {
   default     = 30
 }
 
+variable "health_check_grace_period_seconds" {
+  description = "ECS service health check grace period (needs_alb services only). Bump for services with slower cold starts (e.g. cross-region DB)."
+  type        = number
+  default     = 60
+}
+
 # --- Autoscaling (web services that are leader-safe) ---
 variable "autoscaling_enabled" {
   description = "Create an appautoscaling target + CPU target-tracking policy."
