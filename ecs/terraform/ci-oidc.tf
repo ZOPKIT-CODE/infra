@@ -110,10 +110,14 @@ data "aws_iam_policy_document" "github_deploy" {
     resources = ["arn:aws:s3:::zopkit-tfstate-${local.account_id}", "arn:aws:s3:::zopkit-tfstate-${local.account_id}/*"]
   }
   statement {
-    sid       = "FrontendAndMediaBuckets"
-    effect    = "Allow"
-    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
-    resources = ["arn:aws:s3:::${local.name_prefix}-*", "arn:aws:s3:::${local.name_prefix}-*/*", "arn:aws:s3:::wrapper-tenant-logos", "arn:aws:s3:::wrapper-tenant-logos/*"]
+    sid     = "FrontendAndMediaBuckets"
+    effect  = "Allow"
+    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
+    # zopkit-prod-wrapper-fe is explicit (not just ${local.name_prefix}-*): the
+    # live app.zopkit.com CloudFront distribution (EN60I8X0N59OO) reads from
+    # this prod-named bucket even though this role is applied under the
+    # staging tfvars — deploy.yml's wrapper-web frontend job writes here.
+    resources = ["arn:aws:s3:::${local.name_prefix}-*", "arn:aws:s3:::${local.name_prefix}-*/*", "arn:aws:s3:::wrapper-tenant-logos", "arn:aws:s3:::wrapper-tenant-logos/*", "arn:aws:s3:::zopkit-prod-wrapper-fe", "arn:aws:s3:::zopkit-prod-wrapper-fe/*"]
   }
   statement {
     sid       = "CloudFrontInvalidate"
