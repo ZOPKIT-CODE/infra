@@ -1,0 +1,15 @@
+{
+  "name": "zopkit-bug-resolution-mcp",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "MCP server: submit how a bug report was fixed to the wrapper API's POST /admin/bug-reports/resolution/:id. See README.md.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.24.0"
+  }
+}
