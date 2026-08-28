@@ -39,6 +39,8 @@ locals {
       "BREVO_API_KEY",
       "SMTP_USER",
       "SMTP_PASS",
+      "SES_SENDER_EMAIL", # AWS SES sender identity — takes priority over Brevo once set; must be verified in the SES console
+      "SES_SENDER_NAME",
       "OPENAI_API_KEY",
       "SENTRY_DSN",
       "SUPABASE_SERVICE_ROLE_KEY",
