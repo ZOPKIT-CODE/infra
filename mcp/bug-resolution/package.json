@@ -1,10 +1,20 @@
 {
   "name": "zopkit-bug-resolution-mcp",
-  "private": true,
   "version": "1.0.0",
   "type": "module",
-  "description": "MCP server: submit how a bug report was fixed to the wrapper API's POST /admin/bug-reports/resolution/:id. See README.md.",
+  "description": "MCP server: submit how a bug report was fixed to Zopkit wrapper's POST /admin/bug-reports/resolution/:id. Requires a BUG_REPORT_API_KEY (generated in the company-admin panel) — see README.md.",
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=18"
+  },
   "main": "index.js",
+  "bin": {
+    "zopkit-bug-resolution-mcp": "index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
   "scripts": {
     "start": "node index.js"
   },
