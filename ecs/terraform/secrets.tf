@@ -46,6 +46,7 @@ locals {
       "SUPABASE_SERVICE_ROLE_KEY",
       "SUPABASE_ANON_KEY",
       "WRAPPER_SECRET_KEY",
+      "BUG_REPORT_RESOLUTION_API_KEY", # X-API-Key for POST /api/admin/bug-reports/resolution/:id — see bug-reports/README.md
     ]
 
     crm = [
