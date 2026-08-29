@@ -1,11 +1,19 @@
 # bug-resolution MCP server
 
-A single-tool MCP server so Claude Code (or Cursor, or any other MCP client)
-can report back how it fixed a Zopkit bug report as a native tool call,
-instead of hand-rolling a curl command. It's a thin wrapper around
-`POST /api/admin/bug-reports/resolution/:id` — see
-`backend/src/features/bug-reports/README.md` for what that endpoint
-actually does server-side.
+A two-tool MCP server so Claude Code (or Cursor, or any other MCP client) can
+work a Zopkit bug report end to end as native tool calls, instead of
+hand-rolling curl commands:
+
+- **`fetch_bug_context`** — pulls the full report (title, description,
+  severity, status, page URL, browser info, discussion comments) plus every
+  inline screenshot as real image content, via
+  `GET /api/admin/bug-reports/context/:id`.
+- **`submit_bug_resolution`** — writes back how it was fixed as a Markdown
+  writeup and moves the report to `resolved`, via
+  `POST /api/admin/bug-reports/resolution/:id`.
+
+Both are thin wrappers — see `backend/src/features/bug-reports/README.md`
+for what each endpoint actually does server-side.
 
 Published to npm as
 [`zopkit-bug-resolution-mcp`](https://www.npmjs.com/package/zopkit-bug-resolution-mcp)
@@ -14,8 +22,11 @@ Published to npm as
 ## Setup
 
 1. **Get a key.** In the company-admin panel → Bug Reports → **API Keys**
-   (full `bug-reports` staff access only), generate one and copy it — it's
-   shown exactly once.
+   (any platform staff with `bug-reports` or `bug-reports-own` access can
+   generate their own), generate one and copy it — it's shown exactly once.
+   The key's reach (every report, or only reports you created/are assigned
+   to) always tracks your *current* staff role — it's resolved live on every
+   call, not fixed at generation time.
 
 2. **Register the server** — either via the CLI:
 
@@ -66,11 +77,17 @@ everyone else should use.
 
 ## Usage
 
-Once registered, ask Claude Code (or whichever tool you fixed the bug with)
-to call `submit_bug_resolution` with the bug report's id (a UUID — from
-whoever asked you to fix it, or the report's admin-panel URL) and a Markdown
-writeup. It sets the report's resolution notes to that writeup and moves its
-status straight to `resolved`.
+Once registered, give Claude Code (or whichever tool) the bug report's id (a
+UUID — copy it from the ID chip in the report's detail panel, or from
+whoever asked you to fix it).
+
+1. Ask it to call `fetch_bug_context` with that id first — you'll get the
+   title, description, severity/status, discussion, and every screenshot
+   actually rendered as images, so the tool can see the bug instead of just
+   reading a URL to it.
+2. After fixing it, ask it to call `submit_bug_resolution` with the same id
+   and a Markdown writeup. It sets the report's resolution notes to that
+   writeup and moves its status straight to `resolved`.
 
 ## Notes
 
@@ -81,5 +98,6 @@ status straight to `resolved`.
   via the `BUG_REPORT_API_KEY` env var, never embedded.
 - The key is per-developer and individually revocable from the same API Keys
   panel — revoking one never affects any other person's key.
-- This server only exposes the one write it needs. It can't list, search, or
-  read bug reports — the person/tool using it needs the report's id already.
+- This server only exposes the two operations it needs. It can't list or
+  search bug reports — the person/tool using it needs the report's id
+  already.
