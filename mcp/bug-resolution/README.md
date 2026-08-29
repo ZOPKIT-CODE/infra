@@ -62,6 +62,19 @@ Published to npm as
    elsewhere (e.g. a local dev backend) with an extra env var,
    `BUG_REPORT_API_BASE_URL=http://localhost:3000`.
 
+   **On Windows**, a bare `npx` command as shown above commonly fails or
+   hangs (MCP client "connection timed out after 30000ms") — Windows needs
+   `npx.cmd` resolved through `cmd.exe`, not the bare `npx` name spawn()
+   looks for on macOS/Linux. Route it through `cmd /c` instead:
+
+   ```bash
+   claude mcp add bug-resolution \
+     --env BUG_REPORT_API_KEY=<the key you copied> \
+     -- cmd /c npx -y zopkit-bug-resolution-mcp
+   ```
+
+   or in the JSON config, `"command": "cmd", "args": ["/c", "npx", "-y", "zopkit-bug-resolution-mcp"]`.
+
 3. Restart Claude Code (or Claude Desktop) and approve `bug-resolution` when
    prompted.
 
