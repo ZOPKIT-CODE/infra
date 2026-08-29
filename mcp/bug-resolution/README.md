@@ -1,7 +1,7 @@
 # bug-resolution MCP server
 
-A two-tool MCP server so Claude Code (or Cursor, or any other MCP client) can
-work a Zopkit bug report end to end as native tool calls, instead of
+A four-tool MCP server so Claude Code (or Cursor, or any other MCP client)
+can work a Zopkit bug report end to end as native tool calls, instead of
 hand-rolling curl commands:
 
 - **`fetch_bug_context`** — pulls the full report (title, description,
@@ -11,8 +11,13 @@ hand-rolling curl commands:
 - **`submit_bug_resolution`** — writes back how it was fixed as a Markdown
   writeup and moves the report to `resolved`, via
   `POST /api/admin/bug-reports/resolution/:id`.
+- **`fetch_assigned_bugs`** — lists reports currently assigned to the API
+  key's owner ("what's on my plate"), optionally filtered by status, via
+  `GET /api/admin/bug-reports/assigned`.
+- **`create_bug_report`** — files a new bug report (plain-text description),
+  optionally self-assigning it, via `POST /api/admin/bug-reports/report`.
 
-Both are thin wrappers — see `backend/src/features/bug-reports/README.md`
+All four are thin wrappers — see `backend/src/features/bug-reports/README.md`
 for what each endpoint actually does server-side.
 
 Published to npm as
@@ -89,6 +94,14 @@ whoever asked you to fix it).
    and a Markdown writeup. It sets the report's resolution notes to that
    writeup and moves its status straight to `resolved`.
 
+Two more, independent of the fetch/resolve flow above:
+
+- Ask it to call `fetch_assigned_bugs` (optionally with a `status` filter) to
+  see what's currently assigned to you — no id needed.
+- Ask it to call `create_bug_report` with a `title` and plain-text
+  `description` to file something it noticed — pass `assignToSelf: true` to
+  claim it immediately.
+
 ## Notes
 
 - Not part of the pnpm workspace (`pnpm-workspace.yaml`) or the deployed
@@ -98,6 +111,6 @@ whoever asked you to fix it).
   via the `BUG_REPORT_API_KEY` env var, never embedded.
 - The key is per-developer and individually revocable from the same API Keys
   panel — revoking one never affects any other person's key.
-- This server only exposes the two operations it needs. It can't list or
-  search bug reports — the person/tool using it needs the report's id
-  already.
+- `fetch_bug_context` and `submit_bug_resolution` still need a report id —
+  this server doesn't search or browse. `fetch_assigned_bugs` is the one tool
+  that doesn't require knowing an id up front.
