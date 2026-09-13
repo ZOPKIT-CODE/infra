@@ -268,4 +268,8 @@ sequenceDiagram
 ## Related docs
 
 - **Deploy steps:** [`ecs/terraform/README.md`](./ecs/terraform/README.md)
-- **Full suite (EKS alternative, unused):** older `deploy/terraform/` EKS stack — left untouched; ECS is the active path.
+- **CI/CD:** [`ci/README.md`](./ci/README.md)
+
+> A parallel EKS/Helm stack (`deploy/terraform/`, `deploy/helm/`) was drafted in June 2026
+> and never applied — no cluster, no state. It was removed so `deploy/` has exactly one
+> deployment path. Recover from git history if Kubernetes is ever revisited.

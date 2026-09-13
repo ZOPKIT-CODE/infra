@@ -1,6 +1,5 @@
 # ---------------------------------------------------------------------------
-# Outputs for the ECS Fargate stack. EKS/namespace/IRSA/Helm app_wiring outputs
-# are dropped; these surface the ECS cluster, shared ALB, registry, messaging,
+# Outputs for the ECS Fargate stack: the ECS cluster, shared ALB, registry, messaging,
 # cache, Cognito, storage/CDN, secrets, and the per-service ECS handles.
 # ---------------------------------------------------------------------------
 

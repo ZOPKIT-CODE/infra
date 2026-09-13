@@ -2,7 +2,6 @@
 # Zopkit Suite — ECS Fargate stack Makefile
 #
 # Wraps the operator workflow:
-#   copy-shared            copy the 6 verbatim shared files from the EKS stack
 #   init / plan / apply    terraform lifecycle (workspace + tfvars aware)
 #   login-ecr              docker login to the account ECR registry
 #   build-<app> push-<app> build + push wrapper|crm|fa images to ECR
@@ -15,7 +14,6 @@
 # =============================================================================
 
 # --- Tunables --------------------------------------------------------------
-EKS_STACK   ?= ../../terraform                 # source of the verbatim shared files
 TFVARS      ?= terraform.staging.tfvars
 WORKSPACE   ?= staging
 AWS_REGION  ?= us-east-1
@@ -27,12 +25,6 @@ ECR_REGISTRY = $(ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
 
 # ECS cluster name is "${project}-${environment}". Default matches staging tfvars.
 CLUSTER     ?= zopkit-staging
-
-# The 6 files copied VERBATIM from the EKS stack (authors never edit these here).
-# NOTE: ses_inbound.tf is intentionally NOT copied — it's optional (CRM inbound
-# email, off by default) and its eager filemd5() needs a deeper relative path
-# from this stack. Add it later with a corrected path if you enable SES inbound.
-SHARED_FILES = cognito.tf messaging.tf s3.tf cloudfront.tf ecr.tf secrets.tf
 
 # App -> ECR repo mapping.
 #   wrapper -> wrapper-backend, crm -> crm-backend, fa -> fa-backend
@@ -46,15 +38,6 @@ REPO_fa      = fa-backend
 help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-22s\033[0m %s\n", $$1, $$2}'
-
-# --- Shared files ----------------------------------------------------------
-.PHONY: copy-shared
-copy-shared: ## Copy the 6 verbatim shared .tf files from the EKS stack
-	@echo ">> Copying shared files from $(EKS_STACK)"
-	@for f in $(SHARED_FILES); do \
-		cp -v "$(EKS_STACK)/$$f" "./$$f"; \
-	done
-	@echo ">> Done. These are reused unchanged — do not edit them here."
 
 # --- Terraform lifecycle ---------------------------------------------------
 .PHONY: init

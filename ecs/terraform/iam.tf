@@ -1,11 +1,10 @@
 # ---------------------------------------------------------------------------
-# iam.tf — ECS task roles + ONE shared execution role. Replaces the EKS stack's
-# iam_irsa.tf (no OIDC, no controller IRSA, no ESO role).
+# iam.tf — ECS task roles + ONE shared execution role. No OIDC/IRSA: ECS hands
+# each task its role directly.
 #
 #   (A) ecs-tasks.amazonaws.com assume-role trust (shared by all task roles).
 #   (B) 3 per-app TASK roles (wrapper / crm / fa) carrying the least-privilege
-#       runtime policies ported VERBATIM from the EKS stack's iam_irsa.tf §(C)
-#       — same SIDs, actions, and ARN expressions. fa-web AND fa-consumer share
+#       runtime policies — least privilege per app. fa-web AND fa-consumer share
 #       the single "fa" task role.
 #   (C) 1 shared EXECUTION role: AmazonECSTaskExecutionRolePolicy (ECR pull +
 #       CloudWatch logs) plus an inline secretsmanager:GetSecretValue grant on

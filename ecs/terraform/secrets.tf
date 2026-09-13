@@ -4,12 +4,12 @@
 # Each app gets a single JSON secret at `${var.project}/${var.environment}/<app>`
 # (e.g. zopkit/prod/wrapper). The values authored here are PLACEHOLDERS only —
 # every key is set to "REPLACE_ME". Operators MUST populate the real values
-# BEFORE pods start; External Secrets Operator (see addons.tf / externalsecret.yaml)
-# syncs each of these into a Kubernetes Secret consumed by the Deployment's
-# `secretRef`.
+# BEFORE the first task starts; ECS injects them into the container via the task
+# definition's `secrets` block (valueFrom = "<secret arn>:<KEY>::"), so values
+# never appear in the task's plain environment, in plans, or in state.
 #
-# AWS credentials are intentionally NOT included here — IRSA (aws_iam_role.app,
-# see iam_irsa.tf) provides the pod's AWS access at runtime.
+# AWS credentials are intentionally NOT included here — the per-app ECS TASK role
+# (aws_iam_role.task, see iam.tf) provides the container's AWS access at runtime.
 #
 # The `lifecycle { ignore_changes = [secret_string] }` block ensures Terraform
 # never clobbers operator-populated values on subsequent applies.

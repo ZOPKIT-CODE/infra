@@ -1,17 +1,14 @@
 # Zopkit Suite — ECS Fargate Terraform Stack
 
 A self-contained **ECS Fargate** deployment of the Zopkit suite (wrapper / CRM /
-FA backends). It is an alternative compute layer to the EKS stack at
-`/Users/zopkit/Downloads/wrapper/deploy/terraform` — same AWS-native services,
-no Kubernetes.
+FA backends). This is **the** deployment stack — the only one.
 
 - **Compute:** ECS Fargate + one shared internet-facing ALB + per-app task roles
   + native Secrets Manager injection + Terraform-managed Route53 alias records.
-- **No** EKS, Helm, Kubernetes/Helm providers, External Secrets Operator,
-  external-dns, AWS Load Balancer Controller, or IRSA/OIDC.
-- **Reused VERBATIM from the EKS stack** (Cognito, SNS+SQS, S3+CloudFront, ECR,
-  Secrets Manager, optional SES inbound). The EKS stack is **never modified** —
-  it stays intact for a future migration back to Kubernetes if desired.
+- **No** Kubernetes: no EKS, Helm, External Secrets Operator, external-dns,
+  AWS Load Balancer Controller, or IRSA/OIDC.
+- Everything this stack needs is checked in here (Cognito, SNS+SQS, S3+CloudFront,
+  ECR, Secrets Manager). There is no second stack to copy files from.
 
 The four Fargate services:
 
@@ -40,43 +37,17 @@ override and shares the `fa` task role + `fa` env/secrets with `fa-web`.
 - Docker (for building + pushing app images to ECR).
 - `aws` CLI v2 (for image push, `update-service`, and one-off migration tasks).
 
----
-
-## Step 0 — Copy the 6 shared files from the EKS stack (REQUIRED)
-
-This stack **reuses the AWS-native service definitions verbatim**. They are NOT
-checked in here — copy them from the EKS stack before the first `init`. The
-`Makefile` automates it:
-
-```bash
-make copy-shared
-```
-
-which copies these files unchanged from
-`/Users/zopkit/Downloads/wrapper/deploy/terraform` into this directory:
-
-```
-cognito.tf  messaging.tf  s3.tf  cloudfront.tf  ecr.tf  secrets.tf
-```
-
-These consume only locals defined in this stack's `locals.tf`
-(`name_prefix`, `account_id`, `partition`, `apps`, `fqdn`, `frontends`,
-`s3_buckets`, `sns_topics`, `sqs_queues`) plus `secrets.tf`'s own
-`local.app_secret_keys`. Do not edit them after copying. Re-run `make copy-shared`
-whenever the EKS originals change.
-
-> **`ses_inbound.tf` is intentionally not copied** — CRM inbound email is optional
-> and off by default (`enable_ses_inbound=false`), and its eager `filemd5()` needs a
-> deeper relative path from this stack. If you later enable SES inbound, copy it and
-> set its handler path to `../../../../b2b-crm/infra/lambda/ses-inbound-handler`.
+> **CRM inbound email (SES) is not wired into this stack.** It was defined only in
+> the retired EKS stack (`ses_inbound.tf`), is optional, and was off by default
+> (`enable_ses_inbound=false`). To bring it back, recover the file from git history
+> — `git show 5d1019e:deploy/terraform/ses_inbound.tf` — and set its handler path to
+> `../../../../b2b-crm/infra/lambda/ses-inbound-handler`.
 
 ---
 
 ## Step 1 — Init / plan / apply (single apply, no two-phase bootstrap)
 
-Unlike the EKS stack (which needed a two-phase apply for the ESO
-`ClusterSecretStore`), this stack applies in **one shot** — there is no
-in-cluster bootstrap.
+This stack applies in **one shot** — there is no in-cluster bootstrap phase.
 
 ```bash
 # pick an isolated workspace per environment
@@ -135,11 +106,11 @@ How injection works (no ESO):
 between apps (e.g. wrapper `SHARED_APP_JWT_SECRET`; crm `FA_JWT_SECRET` /
 `WRAPPER_SERVICE_TOKEN`; fa `WRAPPER_API_KEY` / `WRAPPER_FETCH_TOKEN`). Set the
 matching halves consistently across `zopkit/<env>/{wrapper,crm,fa}` or inter-app
-auth will fail. This is identical to the EKS stack's secret contract.
+auth will fail.
 
 ---
 
-## Step 3 — Build + push images to ECR (same flow as the EKS stack)
+## Step 3 — Build + push images to ECR
 
 ECR repos `wrapper-backend`, `crm-backend`, `fa-backend` are created by `ecr.tf`.
 Authenticate, build, tag, and push:
@@ -250,13 +221,11 @@ Frontends (CloudFront) come up once you upload the SPA bundles to the
 ```
 versions.tf providers.tf variables.tf locals.tf      # core config
 vpc.tf alb.tf iam.tf ecs.tf observability.tf          # ECS compute layer (VPC file is vpc.tf)
-route53_acm.tf elasticache.tf outputs.tf              # adapted from EKS
-cognito.tf messaging.tf s3.tf cloudfront.tf \         # COPIED VERBATIM (Step 0)
+route53_acm.tf elasticache.tf outputs.tf              # edge, cache, outputs
+cognito.tf messaging.tf s3.tf cloudfront.tf \         # AWS-native shared services
   ecr.tf secrets.tf
 modules/ecs-service/                                  # reusable Fargate service module
 terraform.staging.tfvars terraform.tfvars.example     # inputs
 Makefile README.md
 ```
 
-The EKS stack at `/Users/zopkit/Downloads/wrapper/deploy/terraform` is **not
-touched** by anything here.

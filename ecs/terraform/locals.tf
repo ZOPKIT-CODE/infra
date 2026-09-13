@@ -262,9 +262,8 @@ locals {
   acm_cert_arn    = aws_acm_certificate_validation.wildcard.certificate_arn
 
   # ----------------------------------------------------------------------------
-  # PER-APP ENVIRONMENT (non-secret). Ported from the EKS stack's
-  # outputs.tf app_wiring.env, resolved to ECS terms. fa-consumer reuses the fa
-  # env (same `app` key). All values are strings.
+  # PER-APP ENVIRONMENT (non-secret). fa-consumer reuses the fa env (same `app`
+  # key). All values are strings.
   # ----------------------------------------------------------------------------
   # Cognito: reuse an EXISTING shared pool (with Google federation etc. already
   # configured) when overrides are set; otherwise fall back to the pool this stack
