@@ -141,7 +141,11 @@ if aws ecr describe-images --repository-name "$ECR_REPO" --image-ids imageTag="$
   echo "▶ [1/6+2/6] image $TAG already in ECR (immutable) — skipping build+push"
 else
 echo "▶ [1/6] docker build (linux/amd64)…"
-( cd "$REPO" && docker build --platform linux/amd64 -f "$DOCKERFILE" --target "$TARGET" -t "$IMAGE" "$CONTEXT" )
+# --target is omitted when the manifest has none: academy's Dockerfile ends in an
+# unnamed stage (plain `FROM node:18-alpine`), and `--target ""` is an error.
+BUILD_ARGS=(--platform linux/amd64 -f "$DOCKERFILE")
+[[ -n "$TARGET" ]] && BUILD_ARGS+=(--target "$TARGET")
+( cd "$REPO" && docker build "${BUILD_ARGS[@]}" -t "$IMAGE" "$CONTEXT" )
 
 echo "▶ [2/6] push to ECR…"
 aws ecr get-login-password --region "$AWS_REGION" \

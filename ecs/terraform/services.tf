@@ -80,6 +80,9 @@ module "services" {
   host_header            = each.value.host_header
   health_check_path      = each.value.health_check_path
   stickiness_enabled     = each.value.stickiness_enabled
+  # Adopt a pre-existing group name where one differs from the generated
+  # "<prefix>-<service>" (academy-web's is ...-academy-tg). Absent = generated.
+  target_group_name      = try(each.value.target_group_name, null)
   health_check_grace_period_seconds = each.value.health_check_grace_period_seconds
 
   # --- Autoscaling (wrapper-web only; others pinned) ---

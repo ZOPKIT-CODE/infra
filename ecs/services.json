@@ -38,7 +38,6 @@
     "path, so they are released by hand (see the Deployment-Manager IAM user in",
     "CloudTrail). Adding one means one entry here, once the source repo, Dockerfile",
     "path and health endpoint are confirmed:",
-    "  academy-web           ecr/repo/health TBC",
     "  ops-web               ecr/repo/health TBC",
     "  entertainment-erp-web ecr/repo/health TBC"
   ],
@@ -138,6 +137,23 @@
       ],
       "api_subdomain": "lens-api",
       "health_path": "/api/health",
+      "sibling": null
+    },
+    "academy-web": {
+      "app": "academy",
+      "ecr": "academy-backend",
+      "source_repo": "Zopkit/Zopkit-Academy",
+      "repo_env": "ACADEMY_REPO",
+      "dockerfile": "Currentproject/Dockerfile.backend",
+      "context": "Currentproject",
+      "target": null,
+      "migrate": true,
+      "migrate_cmd": [
+        "node",
+        "dist/db/migrate.js"
+      ],
+      "api_subdomain": "academy-api",
+      "health_path": "/health",
       "sibling": null
     }
   }

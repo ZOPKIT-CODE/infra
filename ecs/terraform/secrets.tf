@@ -98,6 +98,13 @@ locals {
     # created. These are the keys it actually holds — read from the live secret, so
     # the placeholder document Terraform would write matches its real shape. Values
     # are never touched: ignore_changes = [secret_string] on the version below.
+    #
+    # Adopting it replaces the hand-written AWS description, which recorded:
+    #   "Academy backend secrets (manual ECS deploy, dev branch). DATABASE_URL
+    #    points at the shared production Supabase DB per explicit user decision."
+    # Keeping that here because it is the more important half: academy's
+    # DATABASE_URL is deliberately pointed at the shared PRODUCTION Supabase
+    # database, not a staging one.
     academy = [
       "DATABASE_URL",
       "JWT_SECRET",
@@ -148,7 +155,7 @@ resource "aws_secretsmanager_secret" "app" {
   for_each = local.apps
 
   name                    = "${var.project}/${var.environment}/${each.key}"
-  description             = "Runtime secrets for the ${each.key} backend (populate before pods start; synced via External Secrets Operator)."
+  description             = "Runtime secrets for the ${each.key} backend. Populate before the first task starts; ECS injects them via the task definition's secrets block."
   recovery_window_in_days = 7
 
   tags = {
