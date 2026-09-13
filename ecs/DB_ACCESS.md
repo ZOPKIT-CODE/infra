@@ -26,21 +26,26 @@ psql "postgresql://wrapper_viewer:<pw>@localhost:5432/wrapper_staging?sslmode=re
 ```
 Roles in that secret: `viewer` (read-only), `app` (DML), `migrator` (DDL/owner).
 
-**Running the local backends against staging RDS?** Each app's `.env` points at its
-own pinned local port (wrapper `5432`, crm `5433`, fa `5434` — see `db-apps.sh`), so
-open all of them at once with one self-healing command:
-```bash
-./deploy/ecs/db-tunnels-up.sh          # open every app's tunnel (background, self-healing)
-./deploy/ecs/db-tunnels-up.sh status   # which ports are up
-./deploy/ecs/db-tunnels-up.sh down     # stop the ones it started
+**Running the local backends against staging RDS?** Point each app's `.env`
+`DATABASE_URL` straight at the RDS endpoint — there is nothing to tunnel, the
+instance is publicly reachable and SG-locked to the admin allow-list
+(`rds_admin_cidrs`):
+
 ```
-Leave it running and start your backends — their startup banner shows `DB ✓`. (If
-Claude Code is open with the `postgres-*` MCP servers, those already hold these
-ports; the script detects that and leaves them alone.)
+postgresql://<user>:<pw>@zopkit-staging-db.cup8auyas7qt.us-east-1.rds.amazonaws.com:5432/<app>_staging?sslmode=require
+```
+
+Credentials per app/role come from `zopkit/staging/rds-<app>-roles` — the same
+secret `db-tunnel.sh` reads.
+
+> The old `db-tunnels-up.sh`, which opened one self-healing SSM tunnel per app on
+> a pinned local port (wrapper `5432`, crm `5433`, fa `5434` — see `db-apps.sh`),
+> was removed along with the SSM bastion it depended on. The per-app ports in
+> `db-apps.sh` are still used by the Postgres MCP launcher.
 
 ## 3. Query/analyze with Claude Code → Postgres MCP (auto-tunnel)
-**No manual tunnel.** The MCP launcher (`mcp-db.sh`) opens the SSM tunnel on demand,
-fetches the app's creds from Secrets Manager, and runs the Postgres MCP. Every app
+**No manual tunnel.** The MCP launcher (`mcp-db.sh`) fetches the app's creds from
+Secrets Manager and runs the Postgres MCP straight against the RDS endpoint. Every app
 tunnels on its **own stable local port** (from `db-apps.sh`), so several apps' MCPs
 run side by side without colliding — that's what lets an admin keep all apps open
 at once. The whole setup is **one command**:

@@ -1,16 +1,18 @@
 #!/usr/bin/env bash
 # env-toggle.sh — spin the whole test environment down to (near) zero cost when
 # nobody's testing, and back up in ~90s when you are. No real users right now, so
-# there's no reason to pay for idle Fargate tasks (public-IPv4 charge) or the
-# bastion (public-IPv4 charge) between test sessions.
+# there's no reason to pay for idle Fargate tasks (public-IPv4 charge) between
+# test sessions.
 #
-#   ./deploy/ecs/env-toggle.sh down     # scale every currently-running service to 0,
-#                                        # stop the bastion. Saves the current desired
-#                                        # counts so `up` restores exactly this set.
+#   ./deploy/ecs/env-toggle.sh down     # scale every currently-running service to 0.
+#                                        # Saves the current desired counts so `up`
+#                                        # restores exactly this set.
 #   ./deploy/ecs/env-toggle.sh up       # restore desired counts from the last `down`,
-#                                        # start the bastion, wait for services to
-#                                        # reach steady state.
-#   ./deploy/ecs/env-toggle.sh status   # show desired/running counts + bastion state.
+#                                        # wait for services to reach steady state.
+#   ./deploy/ecs/env-toggle.sh status   # show desired/running counts.
+#
+# The SSM bastion this used to start/stop was retired (see enable_bastion in
+# deploy/ecs/terraform/rds.tf) — the staging RDS is reached directly now.
 #
 # Deliberately does NOT touch: the ALB (no pause state — it bills hourly whether
 # a task is behind it or not; tearing it down/rebuilding it is slow and risky, so
@@ -24,22 +26,9 @@ set -uo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 REGION="${AWS_REGION:-us-east-1}"
 STATE_FILE="$DIR/.env-toggle-state.json"
-BASTION_TAG="zopkit-staging-bastion"
 CLUSTERS=(zopkit-staging-ecs zopkit-prod-ecs)
 
 cmd="${1:-status}"
-
-bastion_id() {
-  aws ec2 describe-instances --region "$REGION" \
-    --filters "Name=tag:Name,Values=$BASTION_TAG" "Name=instance-state-name,Values=running,stopped,stopping,pending" \
-    --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null
-}
-
-bastion_state() {
-  local id="$1"
-  aws ec2 describe-instances --region "$REGION" --instance-ids "$id" \
-    --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null
-}
 
 status() {
   local cluster svc_arns
@@ -50,13 +39,6 @@ status() {
     aws ecs describe-services --region "$REGION" --cluster "$cluster" --services $svc_arns \
       --query "services[].{Name:serviceName,Desired:desiredCount,Running:runningCount}" --output table
   done
-  local bid
-  bid="$(bastion_id)"
-  if [ -n "$bid" ] && [ "$bid" != "None" ]; then
-    echo "bastion ($bid): $(bastion_state "$bid")"
-  else
-    echo "bastion: not found"
-  fi
 }
 
 down() {
@@ -87,33 +69,10 @@ down() {
   fi
   printf '[%s]\n' "$(IFS=,; echo "${entries[*]}")" > "$STATE_FILE"
 
-  local bid state
-  bid="$(bastion_id)"
-  if [ -n "$bid" ] && [ "$bid" != "None" ]; then
-    state="$(bastion_state "$bid")"
-    if [ "$state" = "running" ]; then
-      echo "  bastion ($bid): stopping"
-      aws ec2 stop-instances --region "$REGION" --instance-ids "$bid" >/dev/null
-    else
-      echo "  bastion ($bid): already $state"
-    fi
-  fi
   echo "✓ down. State saved to $STATE_FILE — restore with: $0 up"
 }
 
 up() {
-  local bid state
-  bid="$(bastion_id)"
-  if [ -n "$bid" ] && [ "$bid" != "None" ]; then
-    state="$(bastion_state "$bid")"
-    if [ "$state" = "stopped" ]; then
-      echo "  bastion ($bid): starting"
-      aws ec2 start-instances --region "$REGION" --instance-ids "$bid" >/dev/null
-    else
-      echo "  bastion ($bid): already $state"
-    fi
-  fi
-
   if [ ! -f "$STATE_FILE" ]; then
     echo "  (no saved state — nothing to restore; env was already up, or 'down' was never run)"
     status
