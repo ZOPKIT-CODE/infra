@@ -142,3 +142,33 @@ on-staging arrangement is deliberate while you are in there.
 user (static access keys), service created 2026-09-05.
 Unlike academy, ERP has **no deploy workflow of its own**, so there is no competing
 pipeline to retire. That makes it the cleanest of the remaining apps to onboard.
+
+
+---
+
+## Adopting without onboarding: the drift you take on
+
+Adopting a service into terraform and putting it on the deploy pipeline are separable,
+and doing only the first has a cost worth naming up front.
+
+academy and entertainment-erp are both adopted but NOT on the pipeline — academy is
+deployed by its own workflow, ERP by hand. Terraform therefore holds a view of
+`aws_ecs_service.task_definition` that goes stale the moment either of them deploys,
+and **an apply will set it back**, rolling the app to an older image.
+
+Nothing currently prevents that. `infra-apply`'s safety gate blocks destroys, replaces
+and mass-creates; a task-definition rollback is an *update*, so it passes.
+
+The proper fix is `ignore_changes = [task_definition]` on those two services, so
+terraform owns the surrounding infrastructure and the deploy path owns the running
+revision. It is not a one-liner: `ignore_changes` cannot be driven by a variable, so
+the module needs the service split into two resources selected by a flag — which
+changes the resource address of every service and needs `moved` blocks plus manual
+`state mv` for the already-adopted pair. Worth doing deliberately, with a plan
+reviewed before applying.
+
+Until then: **check the plan before applying anything that touches
+`module.services["academy-web"]` or `module.services["entertainment-erp-web"]`.**
+
+The cleaner long-term answer is to finish onboarding both, so terraform is the only
+thing that deploys them and the question disappears.

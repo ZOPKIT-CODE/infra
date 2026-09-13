@@ -217,6 +217,17 @@ locals {
       # start over that cross-region link takes ~100s, well past the shared 60s default.
       health_check_grace_period_seconds = 240
     }
+    # ⚠ EXTERNALLY DEPLOYED — terraform does NOT own this service's running revision.
+    # academy ships from .github/workflows/deploy-dev-ecs.yml on its `dev` branch,
+    # which registers a task definition and calls update-service directly. Terraform
+    # tracks the surrounding infrastructure (target group, listener rule, log group,
+    # task role, secret, ECR repo) but its aws_ecs_service.task_definition will drift
+    # to whatever that pipeline last shipped.
+    #
+    # DO NOT `terraform apply` this service without checking the plan first: an apply
+    # sets task_definition back to the revision terraform knows, rolling the app back
+    # to an older image. The proper fix is ignore_changes = [task_definition], which
+    # needs a module change because ignore_changes cannot be driven by a variable.
     "academy-web" = {
       enabled                = true # adopted from an out-of-band deployment (see local.apps)
       app                    = "academy"
@@ -241,6 +252,9 @@ locals {
       listener_rule_priority = 100 # matches the live rule
       health_check_grace_period_seconds = 60
     }
+    # ⚠ EXTERNALLY DEPLOYED — same caveat as academy-web above. ERP has no deploy
+    # workflow at all; it is released by hand through the Deployment-Manager IAM user,
+    # so terraform's view of its running revision goes stale the moment anyone deploys.
     "entertainment-erp-web" = {
       enabled                = true # adopted from an out-of-band deployment (see local.apps)
       app                    = "entertainment-erp"
