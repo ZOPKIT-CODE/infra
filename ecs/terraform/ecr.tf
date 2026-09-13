@@ -54,9 +54,15 @@ resource "aws_ecr_repository" "repos" {
 #   rule 1 — keep only the last 20 tagged images (any tag prefix),
 #   rule 2 — expire untagged images after 7 days.
 resource "aws_ecr_lifecycle_policy" "repos" {
-  for_each = aws_ecr_repository.repos
+  # Keyed off the NAME set, not off aws_ecr_repository.repos. Deriving for_each
+  # from another resource's attributes makes the key set unknown until apply,
+  # which breaks `terraform import` for unrelated resources in this stack
+  # ("Invalid for_each argument ... will be known only after apply"). The keys
+  # are identical either way (local.ecr_repo_names is that resource's for_each),
+  # so this is address-stable — no state moves needed.
+  for_each = var.manage_ecr ? local.ecr_repo_names : toset([])
 
-  repository = each.value.name
+  repository = aws_ecr_repository.repos[each.key].name
 
   policy = jsonencode({
     rules = [

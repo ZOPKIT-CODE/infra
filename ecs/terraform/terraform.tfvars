@@ -66,3 +66,12 @@ rds_admin_cidrs         = ["157.50.86.215/32"]
 mathesar_cognito_user_pool_arn = ""
 mathesar_cognito_client_id     = ""
 mathesar_cognito_domain        = ""
+
+# --- Per-environment app presence -------------------------------------------
+# FA is not deployed in any environment yet (fa-web/fa-consumer are
+# enabled=false and the fa-backend ECR repo is empty). Its staging CloudFront
+# distribution was deleted out-of-band, so leaving the frontend declared made
+# every plan want to recreate a distribution for an app that does not exist.
+# Prod keeps its FA frontend: accounting.zopkit.com (E29G1BZ26J4P52) is live
+# and Terraform-managed there.
+disabled_frontends = ["fa"]

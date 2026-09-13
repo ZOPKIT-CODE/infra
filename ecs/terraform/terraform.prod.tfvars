@@ -82,3 +82,10 @@ enable_valkey = false
 
 # Ops alarms (DLQ-not-empty etc.) — confirm the SNS subscription from the inbox after apply.
 alarm_email = "zopkitrock@gmail.com"
+
+# --- Per-environment app presence -------------------------------------------
+# lens lives in staging only. Without these two, prod demands an SSM
+# deployed-tag for lens-web that was never created and `terraform plan` fails
+# outright: Error: reading SSM Parameter (/zopkit/prod/deployed-tag/lens-web).
+service_enabled_overrides = { "lens-web" = false }
+disabled_frontends        = ["lens"]

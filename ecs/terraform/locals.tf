@@ -58,7 +58,7 @@ locals {
   # host_header values are built from local.fqdn (defined further down) so this map
   # references locals declared later in the SAME locals block — valid in HCL.
   # ----------------------------------------------------------------------------
-  services = {
+  services_all = {
     "wrapper-web" = {
       enabled                = true # deployed first
       app                    = "wrapper"
@@ -189,6 +189,17 @@ locals {
     }
   }
 
+  # The effective service map. services_all above carries ONE `enabled` flag per
+  # service, shared by every workspace; var.service_enabled_overrides re-resolves
+  # it per environment. Applied here rather than at each call site so every
+  # consumer (the service module, the deployed-tag SSM data source, live_apps)
+  # sees the same answer.
+  services = {
+    for k, v in local.services_all : k => merge(v, {
+      enabled = try(var.service_enabled_overrides[k], v.enabled)
+    })
+  }
+
   # ----------------------------------------------------------------------------
   # MESSAGING TOPOLOGY (two buses, both SNS -> SQS):
   #   1. Wrapper "platform bus"  = SNS (targeted + broadcast) -> per-app SQS.
@@ -229,13 +240,16 @@ locals {
     fe_lens         = { name = "${local.name_prefix}-lens-fe", region = var.aws_region, public = false }
   }
 
-  # Frontend SPA distributions: subdomain => bucket key in local.s3_buckets
-  frontends = {
+  # Frontend SPA distributions: subdomain => bucket key in local.s3_buckets.
+  # var.disabled_frontends drops entries per environment (an app can have a
+  # frontend in prod and none in staging).
+  frontends_all = {
     wrapper = { subdomain = "app", bucket = "fe_wrapper" }
     crm     = { subdomain = "crm", bucket = "fe_crm" }
     fa      = { subdomain = "accounting", bucket = "fe_fa" }
     lens    = { subdomain = "lens", bucket = "fe_lens" }
   }
+  frontends = { for k, v in local.frontends_all : k => v if !contains(var.disabled_frontends, k) }
 
   fqdn = {
     for k, a in local.apps : k => {

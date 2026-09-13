@@ -113,6 +113,28 @@ variable "service_memory_overrides" {
   default     = {}
 }
 
+# Per-ENVIRONMENT service enablement. local.services carries one `enabled` flag
+# shared by every workspace, which breaks as soon as an app lives in one env but
+# not the other: prod demanded an SSM deployed-tag for lens-web (enabled=true
+# globally, never deployed to prod) and `terraform plan` failed outright on the
+# missing parameter. Set false here to make a service absent from THIS
+# environment without touching the global default.
+variable "service_enabled_overrides" {
+  description = "Override the enabled flag per ECS service (keyed by service name, e.g. lens-web). Empty map = use local.services defaults."
+  type        = map(bool)
+  default     = {}
+}
+
+# Frontend SPA distributions (CloudFront + Route53 + bucket policy) that this
+# environment should NOT have. Same per-environment problem as above: an app can
+# have a frontend in prod and none in staging. Keys are local.frontends keys
+# (wrapper | crm | fa | lens).
+variable "disabled_frontends" {
+  description = "Frontend keys to exclude in this environment. Empty = all frontends in local.frontends are created."
+  type        = set(string)
+  default     = []
+}
+
 # --- ElastiCache Valkey ---
 variable "valkey_node_type" {
   # t4g.micro: the suite's auth/permission caches are tiny and low-traffic
