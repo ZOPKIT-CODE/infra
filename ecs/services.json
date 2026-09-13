@@ -34,16 +34,14 @@
     "                deploy-queue got the older one cancelled and left the worker a",
     "                version behind.",
     "",
-    "NOT YET ONBOARDED -- these are running in staging but exist in neither deploy",
+    "NOT YET ONBOARDED -- these run in staging but exist in neither deploy",
     "path, so they are released by hand (see the Deployment-Manager IAM user in",
     "CloudTrail). Adding one means one entry here, once the source repo, Dockerfile",
     "path and health endpoint are confirmed:",
-    "  lens-web              ecr lens-backend, repo ZOPKIT-CODE/zopkit-lens, api sub 'lens-api'",
     "  academy-web           ecr/repo/health TBC",
     "  ops-web               ecr/repo/health TBC",
     "  entertainment-erp-web ecr/repo/health TBC"
   ],
-
   "services": {
     "wrapper-web": {
       "app": "wrapper",
@@ -54,12 +52,14 @@
       "context": ".",
       "target": "production",
       "migrate": true,
-      "migrate_cmd": ["node", "dist/db/run-migrations.js"],
+      "migrate_cmd": [
+        "node",
+        "dist/db/run-migrations.js"
+      ],
       "api_subdomain": "api",
       "health_path": "/health",
       "sibling": null
     },
-
     "crm-web": {
       "app": "crm",
       "ecr": "crm-backend",
@@ -69,12 +69,14 @@
       "context": ".",
       "target": "production",
       "migrate": true,
-      "migrate_cmd": ["node", "dist/db/run-migrations.js"],
+      "migrate_cmd": [
+        "node",
+        "dist/db/run-migrations.js"
+      ],
       "api_subdomain": "crm-api",
       "health_path": "/health",
       "sibling": "crm-worker"
     },
-
     "crm-worker": {
       "app": "crm",
       "ecr": "crm-backend",
@@ -89,7 +91,6 @@
       "health_path": null,
       "sibling": null
     },
-
     "fa-web": {
       "app": "fa",
       "ecr": "fa-backend",
@@ -99,12 +100,15 @@
       "context": ".",
       "target": "production",
       "migrate": true,
-      "migrate_cmd": ["npm", "run", "db:migrate"],
+      "migrate_cmd": [
+        "npm",
+        "run",
+        "db:migrate"
+      ],
       "api_subdomain": "accounting-api",
       "health_path": "/api/health/health/live",
       "sibling": "fa-consumer"
     },
-
     "fa-consumer": {
       "app": "fa",
       "ecr": "fa-backend",
@@ -117,6 +121,23 @@
       "migrate_cmd": null,
       "api_subdomain": null,
       "health_path": null,
+      "sibling": null
+    },
+    "lens-web": {
+      "app": "lens",
+      "ecr": "lens-backend",
+      "source_repo": "ursrudra/zopkit-lens",
+      "repo_env": "LENS_REPO",
+      "dockerfile": "backend/Dockerfile",
+      "context": ".",
+      "target": "production",
+      "migrate": true,
+      "migrate_cmd": [
+        "node",
+        "dist/db/migrate.js"
+      ],
+      "api_subdomain": "lens-api",
+      "health_path": "/api/health",
       "sibling": null
     }
   }

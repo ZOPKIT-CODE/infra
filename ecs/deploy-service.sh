@@ -112,6 +112,10 @@ if [[ -n "$_sub" && -n "$_path" ]]; then
   if [[ -z "$HEALTH_URL" && -n "${ROOT_DOMAIN:-}" ]]; then
     HEALTH_URL="https://${_sub}.${ROOT_DOMAIN}${_path}"
   fi
+  # This service HAS a health endpoint but we could not build a URL for it, so
+  # step 6 would quietly skip — and a silently-skipped smoke test is how a broken
+  # release gets reported as a success. Say so loudly instead.
+  [[ -n "$HEALTH_URL" ]] || echo "⚠  $SERVICE declares a health endpoint but neither ${UAPP}_HEALTH_URL nor ROOT_DOMAIN is set in deploy.env — the smoke test will be SKIPPED." >&2
 fi
 
 TAG="${2:-$(cd "$REPO" && git rev-parse --short HEAD)}"
