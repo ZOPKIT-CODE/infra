@@ -32,6 +32,8 @@
     "  sibling       service that rides this one's release (same image, no migrate).",
     "                Deployed in the SAME run: two dispatches racing the shared",
     "                deploy-queue got the older one cancelled and left the worker a",
+    "  source_ref    branch the app ships from, when it is not the default. academy",
+    "                deploys from `dev`, not `main`.",
     "                version behind.",
     "",
     "NOT YET ONBOARDED -- these run in staging but exist in neither deploy",
@@ -39,7 +41,17 @@
     "CloudTrail). Adding one means one entry here, once the source repo, Dockerfile",
     "path and health endpoint are confirmed:",
     "  ops-web               ecr/repo/health TBC",
-    "  entertainment-erp-web ecr/repo/health TBC"
+    "  entertainment-erp-web ecr/repo/health TBC",
+    "",
+    "CONFLICT \u2014 academy-web is deployed by its OWN pipeline today:",
+    "  Zopkit/Zopkit-Academy .github/workflows/deploy-dev-ecs.yml (branch `dev`)",
+    "  OIDC role zopkit-staging-academy-github-deploy, builds Dockerfile.backend from",
+    "  the repo root, registers a task definition from taskdef.json and calls",
+    "  update-service directly \u2014 bypassing terraform. It also ships the SPA to",
+    "  zopkit-staging-academy-fe and invalidates CloudFront E1BG5TRQBP57TT.",
+    "  Now that academy-web IS terraform-managed, that pipeline and terraform both",
+    "  own the task definition, so every academy deploy creates drift. Pick one owner",
+    "  before routing academy through this manifest."
   ],
   "services": {
     "wrapper-web": {
@@ -144,8 +156,8 @@
       "ecr": "academy-backend",
       "source_repo": "Zopkit/Zopkit-Academy",
       "repo_env": "ACADEMY_REPO",
-      "dockerfile": "Currentproject/Dockerfile.backend",
-      "context": "Currentproject",
+      "dockerfile": "Dockerfile.backend",
+      "context": ".",
       "target": null,
       "migrate": true,
       "migrate_cmd": [
@@ -154,7 +166,8 @@
       ],
       "api_subdomain": "academy-api",
       "health_path": "/health",
-      "sibling": null
+      "sibling": null,
+      "source_ref": "dev"
     }
   }
 }
