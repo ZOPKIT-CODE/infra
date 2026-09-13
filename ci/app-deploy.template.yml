@@ -1,0 +1,122 @@
+# =============================================================================
+# Suite app deploy — TEMPLATE
+#
+# Copy to .github/workflows/deploy.yml in an app repo and edit the CONFIGURE
+# block. Nothing below that block should need changing; that is the point.
+#
+# What it does:  build → push (SHA tag) → hand off to the wrapper repo, which
+# owns terraform and runs release → migrate → wait → smoke.
+#
+# Why a copy rather than `uses:` a reusable workflow — the honest reason:
+# GitHub only allows private reusable workflows to be called from the SAME
+# organisation. This ecosystem spans two (ZOPKIT-CODE/* and Zopkit/*), so a
+# `workflow_call` template would work for crm, fa, lens and entertainment-erp
+# but NOT for academy or ops. repository_dispatch works everywhere, so the
+# shared thing is this file plus the manifest it feeds.
+#
+# Prerequisites, both mandatory:
+#   1. Your ECR repo is IMMUTABLE and you tag images with the git SHA. If you
+#      publish a moving tag (:staging, :latest) STOP — rollback, the build
+#      skip-guard and the deployed-tag record are all meaningless without it.
+#      See deploy/ecs/ONBOARDING.md in the wrapper repo, section A1.
+#   2. Your service has an entry in deploy/ecs/services.json, and your repo is
+#      listed in github_deploy_repos (ci-oidc.tf) so OIDC works. Ask in the
+#      wrapper repo; both are one-line changes.
+# =============================================================================
+name: deploy
+
+# ─────────────────────────── CONFIGURE ───────────────────────────
+env:
+  SERVICE: entertainment-erp-web                 # key in deploy/ecs/services.json
+  ECR_REPO: entertainment-erp-backend            # ECR repository name
+  DOCKERFILE: server/Dockerfile                  # relative to the build context
+  BUILD_CONTEXT: .                               # usually the repo root
+  BUILD_TARGET: production                       # multi-stage target; "" if the final stage is unnamed
+  # These are the same for every app — do not change them.
+  AWS_REGION: us-east-1
+  ECR_REGISTRY: 207567767101.dkr.ecr.us-east-1.amazonaws.com
+  ROLE_ARN: arn:aws:iam::207567767101:role/zopkit-staging-github-deploy
+  WRAPPER_REPO: ZOPKIT-CODE/Wrapper
+# ──────────────────────── END CONFIGURE ──────────────────────────
+
+on:
+  push:
+    branches: [main]        # the branch this app ships from — academy uses `dev`
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Existing SHA to redeploy (blank = build this commit). Rollback = pass an old SHA."
+        required: false
+        default: ""
+
+permissions:
+  id-token: write           # OIDC — no static AWS keys
+  contents: read
+
+concurrency:
+  # Serialise this app's releases. Deploys of DIFFERENT apps still queue behind
+  # each other on the wrapper side, because they share one terraform state.
+  group: deploy-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-handoff:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          TAG="${{ github.event.inputs.image_tag }}"
+          [ -n "$TAG" ] || TAG="$(git rev-parse --short HEAD)"
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
+          echo "Deploying $SERVICE at $TAG"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: deploy-${{ env.SERVICE }}-${{ github.run_id }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push
+        run: |
+          TAG="${{ steps.tag.outputs.tag }}"
+          IMAGE="$ECR_REGISTRY/$ECR_REPO:$TAG"
+
+          # ECR tags are immutable, so an existing tag is already final. Skipping
+          # makes rollback work (checkout gives you THIS commit, not the old one,
+          # so rebuilding would produce a different image under an old SHA and the
+          # push would be rejected), and makes a release that failed after the push
+          # safe to re-run.
+          if aws ecr describe-images --repository-name "$ECR_REPO" --image-ids imageTag="$TAG" >/dev/null 2>&1; then
+            echo "::notice::$ECR_REPO:$TAG already in ECR — skipping build"
+            exit 0
+          fi
+
+          ARGS=(--platform linux/amd64 -f "$DOCKERFILE")   # Fargate is x86
+          [ -n "$BUILD_TARGET" ] && ARGS+=(--target "$BUILD_TARGET")
+          docker build "${ARGS[@]}" -t "$IMAGE" "$BUILD_CONTEXT"
+          docker push "$IMAGE"
+
+      # The wrapper repo owns terraform and its state, so the release runs there:
+      # record the tag in SSM, apply the service, migrate, wait, smoke.
+      - name: Hand off to the wrapper deploy
+        env:
+          GH_TOKEN: ${{ secrets.DEPLOY_DISPATCH_TOKEN }}
+        run: |
+          [ -n "$GH_TOKEN" ] || { echo "::error::DEPLOY_DISPATCH_TOKEN is not set. It needs read/write Actions on $WRAPPER_REPO — the default GITHUB_TOKEN cannot trigger another repository's workflow."; exit 1; }
+          gh api "repos/$WRAPPER_REPO/dispatches" \
+            -f event_type=deploy-service \
+            -F "client_payload[service]=$SERVICE" \
+            -F "client_payload[image_tag]=${{ steps.tag.outputs.tag }}"
+          echo "Dispatched $SERVICE@${{ steps.tag.outputs.tag }} — follow it in $WRAPPER_REPO → Actions → deploy"
+
+      # repository_dispatch is fire-and-forget: this job goes green even if the
+      # release fails. Until that is closed, check the wrapper run before calling
+      # a deploy done.
+      - name: Where to watch
+        run: |
+          echo "::notice::Release progress -> https://github.com/$WRAPPER_REPO/actions/workflows/deploy.yml"
