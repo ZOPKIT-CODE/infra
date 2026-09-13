@@ -26,6 +26,19 @@ variable "rds_admin_cidrs" {
   default     = []
 }
 
+variable "enable_bastion" {
+  description = <<-EOT
+    Create the SSM bastion (EC2 + IAM role/profile + SG) used to port-forward to a
+    PRIVATE RDS. Off: the staging RDS is publicly accessible and db-tunnel.sh /
+    mcp-db.sh connect to it directly via the rds_admin_cidrs allow-list — no bastion
+    in the path. Both environments' bastion instances were terminated out-of-band
+    well before this flag existed, so leaving it off matches reality. Turn it back
+    on only if RDS moves to private subnets (rds_publicly_accessible = false).
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "rds_publicly_accessible" {
   description = "Staging convenience (true) vs prod security (false → private subnets, reach via SSM/VPN)."
   type        = bool
@@ -72,12 +85,15 @@ resource "aws_security_group" "rds" {
   # a separate resource is stripped by the next apply that touches this SG. That
   # is exactly how the bastion rule silently vanished before (breaking every dev
   # tunnel/MCP). Keep ALL ingress for this SG inline.
-  ingress {
-    description     = "Postgres from SSM bastion"
-    from_port       = 5432
-    to_port         = 5432
-    protocol        = "tcp"
-    security_groups = [aws_security_group.bastion[0].id]
+  dynamic "ingress" {
+    for_each = var.enable_bastion ? [1] : []
+    content {
+      description     = "Postgres from SSM bastion"
+      from_port       = 5432
+      to_port         = 5432
+      protocol        = "tcp"
+      security_groups = [aws_security_group.bastion[0].id]
+    }
   }
 
   dynamic "ingress" {

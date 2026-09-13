@@ -56,7 +56,20 @@ valkey_replicas = 0
 enable_rds              = true
 enable_mathesar         = true
 rds_publicly_accessible = true
-rds_admin_cidrs         = ["157.50.86.215/32"]
+# Admin IPs allowed to reach the DB directly (db-tunnel.sh, mcp-db.sh, the
+# Postgres MCP servers). Terraform treats this SG's inline ingress as COMPLETE,
+# so anything added by hand in the console is stripped by the next apply.
+# The live SG had drifted to six 157.50.x/32 addresses plus an
+#   0.0.0.0/0  "Temporary open access - staging DB testing"
+# rule — i.e. this database, which prod also uses, was reachable from the whole
+# internet on 5432. That rule is deliberately NOT reproduced here, so the next
+# apply closes it.
+# 152.57.156.130 is the current admin egress IP (the five undescribed 157.50.x
+# entries were earlier addresses of the same dynamic connection and are dropped).
+# NOTE: this is a dynamic IP — chasing it with /32s is what led someone to open
+# 0.0.0.0/0 in the first place. If it churns too often, restore the SSM bastion
+# (enable_bastion = true) instead of widening this list.
+rds_admin_cidrs         = ["157.50.86.215/32", "152.57.156.130/32"]
 
 # Mathesar SSO gate DISABLED — single login via Mathesar's own accounts instead
 # of the ALB Cognito gate (Mathesar's native OIDC is still WIP upstream, so a

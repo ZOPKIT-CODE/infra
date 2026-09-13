@@ -9,7 +9,7 @@
 # Then point psql / a GUI / a Postgres MCP at localhost:5432. Gated by var.enable_rds.
 
 data "aws_ami" "al2023" {
-  count       = var.enable_rds ? 1 : 0
+  count       = var.enable_rds && var.enable_bastion ? 1 : 0
   most_recent = true
   owners      = ["amazon"]
   filter {
@@ -26,7 +26,7 @@ data "aws_ami" "al2023" {
 }
 
 resource "aws_iam_role" "bastion" {
-  count = var.enable_rds ? 1 : 0
+  count = var.enable_rds && var.enable_bastion ? 1 : 0
   name  = "${local.name_prefix}-bastion"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -41,20 +41,20 @@ resource "aws_iam_role" "bastion" {
 
 # SSM core managed policy = Session Manager connectivity (no SSH, no inbound).
 resource "aws_iam_role_policy_attachment" "bastion_ssm" {
-  count      = var.enable_rds ? 1 : 0
+  count      = var.enable_rds && var.enable_bastion ? 1 : 0
   role       = aws_iam_role.bastion[0].name
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 resource "aws_iam_instance_profile" "bastion" {
-  count = var.enable_rds ? 1 : 0
+  count = var.enable_rds && var.enable_bastion ? 1 : 0
   name  = "${local.name_prefix}-bastion"
   role  = aws_iam_role.bastion[0].name
 }
 
 # Bastion SG: NO inbound (SSM is outbound-initiated). Egress all (reach SSM + RDS).
 resource "aws_security_group" "bastion" {
-  count       = var.enable_rds ? 1 : 0
+  count       = var.enable_rds && var.enable_bastion ? 1 : 0
   name        = "${local.name_prefix}-bastion"
   description = "SSM bastion - no inbound; egress for SSM + RDS"
   vpc_id      = module.vpc.vpc_id
@@ -75,7 +75,7 @@ resource "aws_security_group" "bastion" {
 # separate resource.
 
 resource "aws_instance" "bastion" {
-  count                       = var.enable_rds ? 1 : 0
+  count                       = var.enable_rds && var.enable_bastion ? 1 : 0
   ami                         = data.aws_ami.al2023[0].id
   instance_type               = "t4g.nano"
   iam_instance_profile        = aws_iam_instance_profile.bastion[0].name
