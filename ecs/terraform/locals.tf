@@ -89,15 +89,28 @@ locals {
       memory                 = 1024
       container_port         = 4000
       command                = []
-      extra_env              = { PROCESS_ROLE = "web" } # API only — background machinery runs in crm-worker
+      # PROCESS_ROLE is set but READ BY NOTHING: b2b-crm's server.ts starts the
+      # Platform Bus SQS consumer, crmOutboxPoller, the DLQ drain, invitation-sync
+      # and the crons unconditionally, in every process. (server/src/app.ts:632
+      # describes a "PROCESS_ROLE gate" that was never implemented.) So this task
+      # runs the full background machinery, not just the API.
+      extra_env              = { PROCESS_ROLE = "web" }
       needs_alb              = true
       host_header            = local.fqdn["crm"].api
       health_check_path      = "/health"
       stickiness_enabled     = false
-      autoscaling_enabled    = true # UNPINNED: outbox poller + SQS consumer moved to crm-worker; in-process crons are advisory-locked
+      # PINNED. This previously read `autoscaling_enabled = true # UNPINNED:
+      # outbox poller + SQS consumer moved to crm-worker` — a false premise, see
+      # above: nothing moved. A 2nd task means two SQS consumers on one queue and
+      # two outbox pollers (which have no SKIP-LOCKED claim). That duplicate
+      # consumption is the 2026-06-11 incident where a 4-copy tenant.onboarded
+      # batch drove concurrent bootstraps and corrupted a tenant's layouts.
+      # Unpin only after CRM leader-gates its pollers the way wrapper does
+      # (pg_try_advisory_lock).
+      autoscaling_enabled    = false
       desired_count          = 1
       min_count              = 1
-      max_count              = 3
+      max_count              = 1
       listener_rule_priority = 20
       health_check_grace_period_seconds = 60
     }
@@ -110,7 +123,12 @@ locals {
       memory                 = 1024
       container_port         = null
       command                = []
-      extra_env              = { PROCESS_ROLE = "worker" } # schedulers + SQS consumer + outbox poller
+      # DO NOT RUN THIS ALONGSIDE crm-web. Same image, no command override, and
+      # PROCESS_ROLE is read by nothing — so this is a second full copy of every
+      # consumer/poller crm-web already runs, not a complement to it. It is
+      # absent in staging and desired_count=0 in prod; both are correct today.
+      # It becomes meaningful only once b2b-crm actually implements the role gate.
+      extra_env              = { PROCESS_ROLE = "worker" }
       needs_alb              = false
       host_header            = null
       health_check_path      = null
