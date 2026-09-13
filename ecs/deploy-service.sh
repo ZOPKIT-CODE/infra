@@ -60,34 +60,59 @@ SERVICE="${1:-}"
 # Each backend lives in its OWN repo; set REPO/DOCKERFILE/CONTEXT accordingly.
 # migrate=true only for the service that owns its database schema (the *-web of
 # each app). fa-consumer shares fa-web's DB, so it never migrates.
-case "$SERVICE" in
-  wrapper-web)
-    ECR_REPO="wrapper-backend"; REPO="$WRAPPER_REPO"
-    DOCKERFILE="backend/Dockerfile"; CONTEXT="."; TARGET="production"
-    MIGRATE=true;  MIGRATE_CMD='["node","dist/db/run-migrations.js"]'
-    HEALTH_URL="${WRAPPER_HEALTH_URL:-}" ;;
-  crm-web)
-    ECR_REPO="crm-backend"; REPO="${CRM_REPO:?set CRM_REPO in deploy.env}"
-    DOCKERFILE="${CRM_DOCKERFILE:-server/Dockerfile}"; CONTEXT="."; TARGET="${CRM_TARGET:-production}"
-    MIGRATE=true;  MIGRATE_CMD="${CRM_MIGRATE_CMD:-[\"npm\",\"run\",\"db:migrate\"]}"  # VERIFY for CRM image
-    HEALTH_URL="${CRM_HEALTH_URL:-}" ;;
-  crm-worker)
-    ECR_REPO="crm-backend"; REPO="${CRM_REPO:?set CRM_REPO in deploy.env}"
-    DOCKERFILE="${CRM_DOCKERFILE:-server/Dockerfile}"; CONTEXT="."; TARGET="${CRM_TARGET:-production}"
-    MIGRATE=false; MIGRATE_CMD=''   # shares crm-web's DB — crm-web's deploy migrates
-    HEALTH_URL='' ;;                # headless (PROCESS_ROLE=worker), no ALB
-  fa-web)
-    ECR_REPO="fa-backend"; REPO="${FA_REPO:?set FA_REPO in deploy.env}"
-    DOCKERFILE="${FA_DOCKERFILE:-server/Dockerfile}"; CONTEXT="."; TARGET="${FA_TARGET:-production}"
-    MIGRATE=true;  MIGRATE_CMD="${FA_MIGRATE_CMD:-[\"npm\",\"run\",\"db:migrate\"]}"   # VERIFY for FA image
-    HEALTH_URL="${FA_HEALTH_URL:-}" ;;
-  fa-consumer)
-    ECR_REPO="fa-backend"; REPO="${FA_REPO:?set FA_REPO in deploy.env}"
-    DOCKERFILE="${FA_DOCKERFILE:-server/Dockerfile}"; CONTEXT="."; TARGET="${FA_TARGET:-production}"
-    MIGRATE=false; MIGRATE_CMD=''
-    HEALTH_URL='' ;;   # headless worker, no ALB / health URL
-  *) echo "✖ Unknown service '$SERVICE'"; exit 1 ;;
-esac
+#
+# The table itself lives in services.json — the SAME file .github/workflows/deploy.yml
+# reads, so the two deploy paths cannot drift apart the way the duplicated bash
+# `case` statements did. Per-service deploy.env overrides still win, for the local
+# checkout path and for anything you need to poke at without editing the manifest.
+MANIFEST="$SCRIPT_DIR/services.json"
+[[ -f "$MANIFEST" ]] || { echo "✖ Missing $MANIFEST"; exit 1; }
+command -v jq >/dev/null || { echo "✖ jq is required to read $MANIFEST (brew install jq)"; exit 1; }
+
+svc_get() { jq -r --arg s "$SERVICE" --arg k "$1" '.services[$s][$k] // empty' "$MANIFEST"; }
+
+jq -e --arg s "$SERVICE" '.services | has($s)' "$MANIFEST" >/dev/null || {
+  echo "✖ Unknown service '$SERVICE'. Known: $(jq -r '.services | keys | join(" ")' "$MANIFEST")" >&2
+  echo "  (Add it to $MANIFEST — that one entry wires up BOTH this script and CI.)" >&2
+  exit 1
+}
+
+APP="$(svc_get app)"
+ECR_REPO="$(svc_get ecr)"
+UAPP="$(echo "$APP" | tr '[:lower:]' '[:upper:]')"
+
+# Local checkout path: <APP>_REPO in deploy.env (WRAPPER_REPO / CRM_REPO / FA_REPO).
+REPO_VAR="$(svc_get repo_env)"
+REPO="${!REPO_VAR:-}"
+[[ -n "$REPO" ]] || { echo "✖ Set $REPO_VAR in deploy.env (local checkout of $APP)"; exit 1; }
+
+# deploy.env may override the build inputs per app, e.g. CRM_DOCKERFILE.
+_df="${UAPP}_DOCKERFILE"; DOCKERFILE="${!_df:-$(svc_get dockerfile)}"
+_ct="${UAPP}_TARGET";     TARGET="${!_ct:-$(svc_get target)}"
+CONTEXT="$(svc_get context)"
+
+# The deploy.env overrides below are keyed by APP (CRM_*, FA_*), but migrate and
+# health are per-SERVICE: a headless worker shares its app's DB and has no ALB.
+# So consult an override ONLY when the manifest says this service has that
+# capability at all — otherwise crm-worker inherits CRM_MIGRATE_CMD and
+# CRM_HEALTH_URL and would try to migrate, then smoke-test crm-web's endpoint.
+MIGRATE="$(jq -r --arg s "$SERVICE" '.services[$s].migrate' "$MANIFEST")"
+MIGRATE_CMD=''
+if [[ "$MIGRATE" == "true" ]]; then
+  _mc="${UAPP}_MIGRATE_CMD"
+  MIGRATE_CMD="${!_mc:-$(jq -c --arg s "$SERVICE" '.services[$s].migrate_cmd' "$MANIFEST")}"
+fi
+
+# Smoke-test URL: explicit <APP>_HEALTH_URL from deploy.env wins; otherwise compose
+# it from the manifest + ROOT_DOMAIN, so one entry serves staging and prod.
+HEALTH_URL=''
+_sub="$(svc_get api_subdomain)"; _path="$(svc_get health_path)"
+if [[ -n "$_sub" && -n "$_path" ]]; then
+  _hu="${UAPP}_HEALTH_URL"; HEALTH_URL="${!_hu:-}"
+  if [[ -z "$HEALTH_URL" && -n "${ROOT_DOMAIN:-}" ]]; then
+    HEALTH_URL="https://${_sub}.${ROOT_DOMAIN}${_path}"
+  fi
+fi
 
 TAG="${2:-$(cd "$REPO" && git rev-parse --short HEAD)}"
 ECR_HOST="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
