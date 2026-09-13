@@ -3,7 +3,7 @@
 # Pinned addresses (consumed by outputs.tf):
 #   aws_cognito_user_pool.this
 #   aws_cognito_user_pool_domain.this
-#   aws_cognito_user_pool_client.clients[<app>]  (for_each = local.apps)
+#   aws_cognito_user_pool_client.clients[<app>]  (apps with cognito_client = true)
 
 # ---------------------------------------------------------------------------
 # User pool
@@ -91,7 +91,10 @@ resource "aws_cognito_user_pool_domain" "this" {
 # Per-app app clients (public clients — no secret; PKCE/SRP from SPAs+backends)
 # ---------------------------------------------------------------------------
 resource "aws_cognito_user_pool_client" "clients" {
-  for_each = local.apps
+  # Opt-in per app. An adopted app can bring its own IdP (academy uses Google
+  # OAuth + Supabase), and creating a pool client it never calls is dead config
+  # that still shows up in every plan and audit.
+  for_each = { for k, v in local.apps : k => v if v.cognito_client }
 
   name         = "${each.key}-client"
   user_pool_id = aws_cognito_user_pool.this.id

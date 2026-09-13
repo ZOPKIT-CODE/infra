@@ -60,7 +60,13 @@ resource "aws_ecs_task_definition" "this" {
 resource "aws_lb_target_group" "this" {
   count = var.needs_alb ? 1 : 0
 
-  name                 = substr("${var.name_prefix}-${var.name}", 0, 32)
+  # Default is the generated name, truncated to the ALB's 32-char limit (which is
+  # how zopkit-staging-entertainment-erp-web lands on ...-entertainment-erp).
+  # target_group_name overrides it so a service created out-of-band under a
+  # different name can be ADOPTED by import instead of forcing a replacement —
+  # a replacement swings live traffic to a new group. See academy-web, whose
+  # pre-existing group is ...-academy-tg rather than ...-academy-web.
+  name                 = coalesce(var.target_group_name, substr("${var.name_prefix}-${var.name}", 0, 32))
   target_type          = "ip"
   protocol             = "HTTP"
   port                 = var.container_port

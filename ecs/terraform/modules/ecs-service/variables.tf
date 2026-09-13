@@ -158,6 +158,12 @@ variable "stickiness_enabled" {
   default     = false
 }
 
+variable "target_group_name" {
+  description = "Override the target-group name. null = \"<name_prefix>-<name>\" truncated to 32 chars. Set it to adopt a group that already exists under a different name, so an import does not force a replacement."
+  type        = string
+  default     = null
+}
+
 variable "deregistration_delay" {
   description = "Target group deregistration delay seconds."
   type        = number

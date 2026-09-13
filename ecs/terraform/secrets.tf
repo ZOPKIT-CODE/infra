@@ -94,6 +94,24 @@ locals {
       "CORS_ORIGINS",
     ]
 
+    # Academy's secret already exists (zopkit/staging/academy) and is imported, not
+    # created. These are the keys it actually holds — read from the live secret, so
+    # the placeholder document Terraform would write matches its real shape. Values
+    # are never touched: ignore_changes = [secret_string] on the version below.
+    academy = [
+      "DATABASE_URL",
+      "JWT_SECRET",
+      "REFRESH_TOKEN_SECRET",
+      "SUPABASE_URL",
+      "SUPABASE_ANON_KEY",
+      "SUPABASE_SERVICE_KEY",
+      "GOOGLE_OAUTH_CLIENT_ID",
+      "GOOGLE_OAUTH_CLIENT_SECRET",
+      "CLOUDINARY_CLOUD_NAME",
+      "CLOUDINARY_API_KEY",
+      "CLOUDINARY_API_SECRET",
+    ]
+
     lens = [
       "DATABASE_URL",
       "DIRECT_URL",

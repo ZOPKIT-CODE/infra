@@ -39,14 +39,20 @@ locals {
   # local.services map below — keeping cognito.tf's for_each = local.apps at three.
   # ----------------------------------------------------------------------------
   apps = {
-    wrapper = { ecr_repo = "wrapper-backend", port = 3000, api_subdomain = "api", frontend_subdomain = "app", tenant_wildcard = true, cdn_proxies_api = false }
-    crm     = { ecr_repo = "crm-backend", port = 4000, api_subdomain = "crm-api", frontend_subdomain = "crm", tenant_wildcard = false, cdn_proxies_api = false }
-    fa      = { ecr_repo = "fa-backend", port = 3002, api_subdomain = "accounting-api", frontend_subdomain = "accounting", tenant_wildcard = false, cdn_proxies_api = false }
+    wrapper = { ecr_repo = "wrapper-backend", port = 3000, api_subdomain = "api", frontend_subdomain = "app", tenant_wildcard = true, cdn_proxies_api = false, cognito_client = true }
+    crm     = { ecr_repo = "crm-backend", port = 4000, api_subdomain = "crm-api", frontend_subdomain = "crm", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = true }
+    fa      = { ecr_repo = "fa-backend", port = 3002, api_subdomain = "accounting-api", frontend_subdomain = "accounting", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = true }
     # lens's frontend does bare relative fetch("/api/...") calls with no configurable API base
     # URL (unlike wrapper/crm/fa) - it MUST be same-origin, so its CloudFront distribution needs
     # to proxy /api/* to the backend ALB. wrapper/crm/fa are deliberately left false: unclear
     # whether their frontends rely on this and untested here - don't change their live behavior.
-    lens    = { ecr_repo = "lens-backend", port = 3002, api_subdomain = "lens-api", frontend_subdomain = "lens", tenant_wildcard = false, cdn_proxies_api = true }
+    lens    = { ecr_repo = "lens-backend", port = 3002, api_subdomain = "lens-api", frontend_subdomain = "lens", tenant_wildcard = false, cdn_proxies_api = true, cognito_client = true }
+    # Academy was stood up out-of-band and is being adopted, not created: its ECS
+    # service, task role, secret, log group, ECR repo and target group all already
+    # exist and are imported. Its API host is academy-api.<root>; the frontend is a
+    # CloudFront distribution this stack does not manage, so academy is deliberately
+    # NOT in local.frontends.
+    academy = { ecr_repo = "academy-backend", port = 8000, api_subdomain = "academy-api", frontend_subdomain = "academy-dev", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = false }
   }
 
   # ----------------------------------------------------------------------------
@@ -205,6 +211,30 @@ locals {
       # start over that cross-region link takes ~100s, well past the shared 60s default.
       health_check_grace_period_seconds = 240
     }
+    "academy-web" = {
+      enabled                = true # adopted from an out-of-band deployment (see local.apps)
+      app                    = "academy"
+      role                   = "academy"
+      ecr_repo               = "academy-backend"
+      cpu                    = 512
+      memory                 = 1024
+      container_port         = 8000
+      command                = []
+      extra_env              = {}
+      needs_alb              = true
+      host_header            = local.fqdn["academy"].api
+      health_check_path      = "/health"
+      stickiness_enabled     = false
+      # Adopt the pre-existing group name (...-academy-tg) instead of the generated
+      # ...-academy-web, so the import is not a replacement.
+      target_group_name      = "${local.name_prefix}-academy-tg"
+      autoscaling_enabled    = false # single task, like every other app whose pollers are not leader-gated
+      desired_count          = 1
+      min_count              = 1
+      max_count              = 1
+      listener_rule_priority = 100 # matches the live rule
+      health_check_grace_period_seconds = 60
+    }
   }
 
   # The effective service map. services_all above carries ONE `enabled` flag per
@@ -312,22 +342,39 @@ locals {
       SENTRY_ENVIRONMENT          = var.environment
       BYPASS_TRIAL_RESTRICTIONS   = tostring(var.bypass_trial_restrictions)
       AWS_REGION                  = var.aws_region
+      BASE_DOMAIN                 = var.root_domain
+      REDIS_ENABLED               = tostring(var.enable_valkey)
+      BACKEND_URL                 = "https://${local.fqdn[app].api}"
+      FRONTEND_URL                = "https://${local.fqdn[app].frontend}"
+    }
+  }
+
+  # Cognito wiring, ONLY for apps that authenticate against the shared pool
+  # (apps.<app>.cognito_client). Adopted apps can bring their own IdP — academy
+  # uses Google OAuth + Supabase — and injecting COGNITO_CLIENT_ID for them would
+  # force an app client to be created in the shared pool that nothing ever uses.
+  service_env_cognito = {
+    for app, cfg in local.apps : app => {
       COGNITO_REGION              = var.aws_region
       COGNITO_USER_POOL_ID        = local.cognito_pool_id
       COGNITO_CLIENT_ID           = lookup(var.cognito_client_ids, app, aws_cognito_user_pool_client.clients[app].id)
       COGNITO_ISSUER_URL          = "https://cognito-idp.${var.aws_region}.amazonaws.com/${local.cognito_pool_id}"
       COGNITO_DOMAIN              = "https://${local.cognito_domain_name}.auth.${var.aws_region}.amazoncognito.com"
-      BASE_DOMAIN                 = var.root_domain
-      REDIS_ENABLED               = tostring(var.enable_valkey)
-      BACKEND_URL                 = "https://${local.fqdn[app].api}"
-      FRONTEND_URL                = "https://${local.fqdn[app].frontend}"
       COGNITO_REDIRECT_URI        = "https://${local.fqdn[app].api}/api/auth/callback"
       COGNITO_LOGOUT_REDIRECT_URI = "https://${local.fqdn[app].frontend}"
-    }
+    } if cfg.cognito_client
+  }
+
+  # What each app actually gets: the common block, plus Cognito only if opted in.
+  app_env = {
+    for app, cfg in local.apps : app => merge(
+      local.service_env_common[app],
+      try(local.service_env_cognito[app], {}),
+    )
   }
 
   service_env = {
-    wrapper = merge(local.service_env_common["wrapper"], {
+    wrapper = merge(local.app_env["wrapper"], {
       PORT                            = "3000"
       FRONTEND_URL                    = "https://${local.fqdn["wrapper"].frontend}"
       AWS_HOSTED_ZONE_ID              = local.route53_zone_id
@@ -347,7 +394,7 @@ locals {
       BLOG_SITE_URL                   = "https://www.${var.root_domain}"
       BLOG_PUBLIC_BASE_URL            = "https://${local.fqdn["wrapper"].api}"
     })
-    crm = merge(local.service_env_common["crm"], {
+    crm = merge(local.app_env["crm"], {
       PORT                   = "4000"
       SQS_INBOUND_QUEUE_URL  = aws_sqs_queue.main["crm_events"].url
       SQS_INBOUND_REGION     = var.aws_region
@@ -358,7 +405,7 @@ locals {
       # CRM's @fastify/cors reads CLIENT_URL (CORS_ORIGINS kept for forward-compat)
       CLIENT_URL             = "https://${local.fqdn["crm"].frontend}"
     })
-    fa = merge(local.service_env_common["fa"], {
+    fa = merge(local.app_env["fa"], {
       SERVER_PORT                   = "3002"
       PORT                          = "3002"
       SQS_ACCOUNTING_QUEUE_URL      = aws_sqs_queue.main["accounting_events"].url
@@ -374,7 +421,7 @@ locals {
     # in the lens repo), own Stripe/Razorpay, no platform SNS/SQS bus. service_env_common's
     # COGNITO_*/REDIS_ENABLED keys are harmless-but-unused (lens's code never reads them) —
     # lens's own Cognito wiring (EXTERNAL_*) comes from its app secret, not from here.
-    lens = merge(local.service_env_common["lens"], {
+    lens = merge(local.app_env["lens"], {
       SERVER_PORT                     = "3002"
       PORT                             = "3002"
       CORS_ORIGINS                     = "https://${local.fqdn["lens"].frontend}"
@@ -402,6 +449,22 @@ locals {
       # requires EXTERNAL_ISSUER_URL/EXTERNAL_OAUTH_DOMAIN/EXTERNAL_CLIENT_ID/EXTERNAL_CLIENT_SECRET
       # (from the app secret, see secrets.tf) and forbids ALLOW_DEV_AUTH in this mode.
       NODE_ENV = "production"
+    })
+
+    # Academy is ADOPTED, so this mirrors the environment its live task definition
+    # already has. It authenticates with Google OAuth + Supabase, not Cognito, so
+    # the COGNITO_* keys service_env_common contributes are inert for it.
+    academy = merge(local.app_env["academy"], {
+      HOST                      = "0.0.0.0"
+      PORT                      = "8000"
+      JWT_EXPIRES_IN            = "15m"
+      REFRESH_TOKEN_EXPIRES_IN  = "7d"
+      RATE_LIMIT_MAX            = "1000"
+      RATE_LIMIT_WINDOW         = "1 minute"
+      # Its SPA is served from academy-dev.<root> by a CloudFront distribution this
+      # stack does not manage — hence frontend_subdomain = "academy-dev" in local.apps.
+      CORS_ORIGIN               = "https://${local.fqdn["academy"].frontend}"
+      GOOGLE_OAUTH_REDIRECT_URI = "https://${local.fqdn["academy"].api}/api/auth/google/callback"
     })
   }
 
