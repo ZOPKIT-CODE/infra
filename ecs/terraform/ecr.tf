@@ -7,6 +7,12 @@
 
 # ECR repos are NOT env-prefixed (image names are shared across environments), so
 # exactly ONE workspace creates them; others reference them. Toggle with manage_ecr.
+variable "mutable_tag_repos" {
+  description = "ECR repositories still publishing a moving tag, so they must stay MUTABLE. Remove an entry once its build emits git-SHA tags — see deploy/ecs/ONBOARDING.md."
+  type        = set(string)
+  default     = ["entertainment-erp-backend"]
+}
+
 variable "manage_ecr" {
   description = "Create the shared ECR repositories (true) or look them up (false). One env owns them; secondary envs (e.g. prod) reference the same images."
   type        = bool
@@ -29,8 +35,17 @@ data "aws_ecr_repository" "repos" {
 resource "aws_ecr_repository" "repos" {
   for_each = var.manage_ecr ? local.ecr_repo_names : []
 
-  name                 = each.key
-  image_tag_mutability = "IMMUTABLE"
+  name = each.key
+
+  # IMMUTABLE by default — that is what makes a rollback trustworthy and what the
+  # deploy pipeline's "tag already in ECR, skip the build" guard relies on.
+  #
+  # Per-repo opt-out for apps still publishing a MOVING tag. Adopting
+  # entertainment-erp-backend (which republishes :staging on every deploy) flipped
+  # it to IMMUTABLE and would have made its very next push fail — an immutable repo
+  # rejects a re-pushed tag. Onboarding order is: switch the app to git-SHA tags
+  # FIRST, then drop it from this set. See deploy/ecs/ONBOARDING.md, A1/A2.
+  image_tag_mutability = contains(var.mutable_tag_repos, each.key) ? "MUTABLE" : "IMMUTABLE"
 
   # Scan every pushed image for known CVEs.
   image_scanning_configuration {

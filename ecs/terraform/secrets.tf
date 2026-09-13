@@ -119,6 +119,16 @@ locals {
       "CLOUDINARY_API_SECRET",
     ]
 
+    # Entertainment ERP: adopted. The live secret holds 8 keys, but only these two
+    # are injected into the task — the other six (host/port/username/password/
+    # dbname/url) are an RDS-style blob that nothing reads. Listing only what is
+    # actually injected keeps the adopt a no-op for the container; the real
+    # document is untouched either way (ignore_changes on the version).
+    entertainment-erp = [
+      "DATABASE_URL",
+      "JWT_SECRET",
+    ]
+
     lens = [
       "DATABASE_URL",
       "DIRECT_URL",

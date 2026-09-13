@@ -78,6 +78,9 @@ module "services" {
   alb_listener_arn       = each.value.needs_alb ? aws_lb_listener.https.arn : null
   listener_rule_priority = each.value.listener_rule_priority
   host_header            = each.value.host_header
+  # Additional hostnames on the same listener rule, for services that front both an
+  # API and a SPA (entertainment-erp). Absent = just host_header.
+  extra_host_headers     = try(each.value.extra_host_headers, [])
   health_check_path      = each.value.health_check_path
   stickiness_enabled     = each.value.stickiness_enabled
   # Adopt a pre-existing group name where one differs from the generated

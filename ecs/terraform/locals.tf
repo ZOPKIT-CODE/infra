@@ -39,20 +39,26 @@ locals {
   # local.services map below — keeping cognito.tf's for_each = local.apps at three.
   # ----------------------------------------------------------------------------
   apps = {
-    wrapper = { ecr_repo = "wrapper-backend", port = 3000, api_subdomain = "api", frontend_subdomain = "app", tenant_wildcard = true, cdn_proxies_api = false, cognito_client = true }
-    crm     = { ecr_repo = "crm-backend", port = 4000, api_subdomain = "crm-api", frontend_subdomain = "crm", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = true }
-    fa      = { ecr_repo = "fa-backend", port = 3002, api_subdomain = "accounting-api", frontend_subdomain = "accounting", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = true }
+    wrapper = { ecr_repo = "wrapper-backend", port = 3000, api_subdomain = "api", frontend_subdomain = "app", tenant_wildcard = true, cdn_proxies_api = false, cognito_client = true, manage_dns = true }
+    crm     = { ecr_repo = "crm-backend", port = 4000, api_subdomain = "crm-api", frontend_subdomain = "crm", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = true, manage_dns = true }
+    fa      = { ecr_repo = "fa-backend", port = 3002, api_subdomain = "accounting-api", frontend_subdomain = "accounting", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = true, manage_dns = true }
     # lens's frontend does bare relative fetch("/api/...") calls with no configurable API base
     # URL (unlike wrapper/crm/fa) - it MUST be same-origin, so its CloudFront distribution needs
     # to proxy /api/* to the backend ALB. wrapper/crm/fa are deliberately left false: unclear
     # whether their frontends rely on this and untested here - don't change their live behavior.
-    lens    = { ecr_repo = "lens-backend", port = 3002, api_subdomain = "lens-api", frontend_subdomain = "lens", tenant_wildcard = false, cdn_proxies_api = true, cognito_client = true }
+    lens    = { ecr_repo = "lens-backend", port = 3002, api_subdomain = "lens-api", frontend_subdomain = "lens", tenant_wildcard = false, cdn_proxies_api = true, cognito_client = true, manage_dns = true }
     # Academy was stood up out-of-band and is being adopted, not created: its ECS
     # service, task role, secret, log group, ECR repo and target group all already
     # exist and are imported. Its API host is academy-api.<root>; the frontend is a
     # CloudFront distribution this stack does not manage, so academy is deliberately
     # NOT in local.frontends.
-    academy = { ecr_repo = "academy-backend", port = 8000, api_subdomain = "academy-api", frontend_subdomain = "academy-dev", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = false }
+    academy = { ecr_repo = "academy-backend", port = 8000, api_subdomain = "academy-api", frontend_subdomain = "academy-dev", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = false, manage_dns = true }
+    # Entertainment ERP: adopted from an out-of-band deployment. It answers on PROD
+    # hostnames (entertainment-api.zopkit.com / entertainment.zopkit.com) while running
+    # on the STAGING ALB, and its Route53 records live in the zopkit.com zone, so
+    # manage_dns = false — deriving <api_subdomain>.<root_domain> here would create a
+    # bogus entertainment-api.staging.zopkit.com record that routes nowhere.
+    entertainment-erp = { ecr_repo = "entertainment-erp-backend", port = 8080, api_subdomain = "entertainment-api", frontend_subdomain = "entertainment", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = false, manage_dns = false }
   }
 
   # ----------------------------------------------------------------------------
@@ -235,6 +241,32 @@ locals {
       listener_rule_priority = 100 # matches the live rule
       health_check_grace_period_seconds = 60
     }
+    "entertainment-erp-web" = {
+      enabled                = true # adopted from an out-of-band deployment (see local.apps)
+      app                    = "entertainment-erp"
+      role                   = "entertainment-erp"
+      ecr_repo               = "entertainment-erp-backend"
+      cpu                    = 512
+      memory                 = 1024
+      container_port         = 8080
+      command                = []
+      extra_env              = {}
+      needs_alb              = true
+      # LITERAL prod hostnames, not local.fqdn: this service is reached on
+      # entertainment-api.zopkit.com even though it runs on the staging ALB, and the
+      # staging-derived name (entertainment-api.staging.zopkit.com) 404s. One service
+      # serves both the API and the SPA, hence the second header.
+      host_header            = "entertainment-api.zopkit.com"
+      extra_host_headers     = ["entertainment.zopkit.com"]
+      health_check_path      = "/health"
+      stickiness_enabled     = false
+      autoscaling_enabled    = false # single task; no evidence its pollers are leader-gated
+      desired_count          = 1
+      min_count              = 1
+      max_count              = 1
+      listener_rule_priority = 110 # matches the live rule
+      health_check_grace_period_seconds = 60
+    }
   }
 
   # The effective service map. services_all above carries ONE `enabled` flag per
@@ -311,7 +343,7 @@ locals {
   # created ONLY for live apps, so a partial-rollout env (e.g. prod with only
   # wrapper deployed) never points crm./accounting. records at empty resources or
   # clobbers another app's existing DNS. Default false preserves all-apps behavior.
-  live_apps      = var.dns_only_live_apps ? { for k, v in local.apps : k => v if try(local.services["${k}-web"].enabled, false) } : local.apps
+  live_apps      = { for k, v in (var.dns_only_live_apps ? { for k2, v2 in local.apps : k2 => v2 if try(local.services["${k2}-web"].enabled, false) } : local.apps) : k => v if v.manage_dns }
   live_frontends = var.dns_only_live_apps ? { for k, v in local.frontends : k => v if try(local.services["${k}-web"].enabled, false) } : local.frontends
 
   # Route53 + ACM are defined in route53_acm.tf. These locals pin the addresses
@@ -465,6 +497,17 @@ locals {
       # stack does not manage — hence frontend_subdomain = "academy-dev" in local.apps.
       CORS_ORIGIN               = "https://${local.fqdn["academy"].frontend}"
       GOOGLE_OAUTH_REDIRECT_URI = "https://${local.fqdn["academy"].api}/api/auth/google/callback"
+    })
+
+    # Entertainment ERP: adopted, so this mirrors its live task definition. CORS is
+    # pinned to the literal prod hostname it is actually served on, not a derived one.
+    entertainment-erp = merge(local.app_env["entertainment-erp"], {
+      PORT                 = "8080"
+      CORS_ORIGINS         = "https://entertainment.zopkit.com"
+      ENABLE_RLS           = "false"
+      REGISTRATION_ENABLED = "true"
+      STORAGE_DRIVER       = "local"
+      FILE_STORAGE_PATH    = "./uploads"
     })
   }
 

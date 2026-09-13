@@ -12,6 +12,8 @@ variable "github_deploy_repos" {
     "ZOPKIT-CODE/Finance-Accounting",
     "ursrudra/zopkit-lens",
     "ZOPKIT-CODE/zopkit-lens",
+    "Zopkit/Zopkit-Academy",
+    "ZOPKIT-CODE/Entertainment-erp",
   ]
 }
 
