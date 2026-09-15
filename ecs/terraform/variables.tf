@@ -1,10 +1,8 @@
-# ---------------------------------------------------------------------------
 # Input variables. Copy terraform.tfvars.example -> terraform.tfvars and edit.
 #
 # This ECS Fargate stack drops all EKS/Kubernetes variables (kubernetes_version,
 # node_*, cluster_*, enable_cluster_secret_store) and adds Fargate networking +
 # optional per-service override maps.
-# ---------------------------------------------------------------------------
 
 variable "project" {
   description = "Project/name prefix for all resources."
@@ -191,7 +189,7 @@ variable "alarm_email" {
 }
 
 variable "enable_ses_inbound" {
-  description = "Provision the CRM SES inbound-email pipeline (S3 -> Lambda -> CRM webhook). OFF by default — it needs SES domain verification + MX records and the handler deps bundled. See ses_inbound.tf."
+  description = "Provision the CRM SES inbound-email pipeline (S3 -> Lambda -> CRM webhook). OFF by default — it needs SES domain verification + MX records and the handler deps bundled. The pipeline itself is not vendored into this stack."
   type        = bool
   default     = false
 }
@@ -233,4 +231,126 @@ variable "enable_valkey" {
   description = "Manage the shared Valkey (Redis-compatible) ElastiCache replication group. Set false to stop paying for it while no app hard-requires caching (e.g. a no-real-users testing phase) - REDIS_ENABLED and the REDIS_URL/REDIS_PASSWORD secret injection are dropped for every app when false, so apps degrade to no-cache rather than failing to find a missing secret. Re-enable and re-apply to recreate."
   type        = bool
   default     = true
+}
+
+# --- CI/CD OIDC (GitHub Actions) ---
+variable "github_deploy_repos" {
+  description = "owner/repo allowed to assume the deploy role via OIDC."
+  type        = list(string)
+  default = [
+    "ZOPKIT-CODE/Wrapper",
+    "ZOPKIT-CODE/B2B-CRM",
+    "ZOPKIT-CODE/Finance-Accounting",
+    "ursrudra/zopkit-lens",
+    "ZOPKIT-CODE/zopkit-lens",
+    "Zopkit/Zopkit-Academy",
+    "ZOPKIT-CODE/Entertainment-erp",
+  ]
+}
+
+variable "enable_ci_oidc" {
+  description = <<-EOT
+    Manage the GitHub Actions OIDC provider + deploy role in THIS environment.
+    The OIDC provider is an account-wide singleton, so exactly ONE environment may
+    own it — keep true for the primary (staging/default) env and false elsewhere
+    (e.g. prod) so a `terraform destroy` of a secondary env can never delete the
+    shared CI principal. A secondary env that later needs its own deploy role can
+    add a role that references the existing provider via a data source.
+  EOT
+  type        = bool
+  default     = true
+}
+
+# --- ECR ---
+# ECR repos are NOT env-prefixed (image names are shared across environments), so
+# exactly ONE workspace creates them; others reference them. Toggle with manage_ecr.
+variable "mutable_tag_repos" {
+  description = "ECR repositories still publishing a moving tag, so they must stay MUTABLE. Remove an entry once its build emits git-SHA tags — see deploy/ecs/ONBOARDING.md."
+  type        = set(string)
+  default     = ["entertainment-erp-backend"]
+}
+
+variable "manage_ecr" {
+  description = "Create the shared ECR repositories (true) or look them up (false). One env owns them; secondary envs (e.g. prod) reference the same images."
+  type        = bool
+  default     = true
+}
+
+# --- RDS + bastion ---
+variable "enable_rds" {
+  description = "Provision the RDS Postgres instance in this environment."
+  type        = bool
+  default     = false
+}
+
+variable "rds_instance_class" {
+  description = "RDS instance class. t4g.micro for staging; bump to t4g.medium for a prod instance hosting several app DBs."
+  type        = string
+  default     = "db.t4g.micro"
+}
+
+variable "rds_admin_cidrs" {
+  description = "Admin IP CIDRs allowed to reach the staging DB directly (for seeding + GUI/MCP). Empty = ECS-tasks-only. Use [] for prod (private)."
+  type        = list(string)
+  default     = []
+}
+
+variable "enable_bastion" {
+  description = <<-EOT
+    Create the SSM bastion (EC2 + IAM role/profile + SG) used to port-forward to a
+    PRIVATE RDS. Off: the staging RDS is publicly accessible and db-tunnel.sh /
+    mcp-db.sh connect to it directly via the rds_admin_cidrs allow-list — no bastion
+    in the path. Both environments' bastion instances were terminated out-of-band
+    well before this flag existed, so leaving it off matches reality. Turn it back
+    on only if RDS moves to private subnets (rds_publicly_accessible = false).
+  EOT
+  type        = bool
+  default     = false
+}
+
+variable "rds_publicly_accessible" {
+  description = "Staging convenience (true) vs prod security (false → private subnets, reach via SSM/VPN)."
+  type        = bool
+  default     = false
+}
+
+variable "rds_deletion_protection" {
+  description = "Protect the DB from accidental deletion (true for prod)."
+  type        = bool
+  default     = false
+}
+
+variable "rds_skip_final_snapshot" {
+  description = "Skip the final snapshot on destroy (true for staging convenience; FALSE for prod)."
+  type        = bool
+  default     = true
+}
+
+# --- Mathesar (DB admin UI) ---
+variable "enable_mathesar" {
+  description = "Deploy the Mathesar UI (staging only by default; keep OFF in prod — no public DB UI)."
+  type        = bool
+  default     = false
+}
+
+# SSO gate for the Mathesar URL. When the cognito vars are set, the ALB requires a
+# Cognito login (authenticate-cognito) BEFORE forwarding to Mathesar — so the UI
+# isn't reachable from the open internet, and it works on any network (no IP
+# allow-list, which CGNAT makes unreliable). Empty vars = no gate (forward only).
+variable "mathesar_cognito_user_pool_arn" {
+  description = "Cognito user pool ARN for the Mathesar ALB SSO gate. Empty = no SSO."
+  type        = string
+  default     = ""
+}
+
+variable "mathesar_cognito_client_id" {
+  description = "Cognito app client id (with a secret + the /oauth2/idpresponse callback) for the ALB SSO gate."
+  type        = string
+  default     = ""
+}
+
+variable "mathesar_cognito_domain" {
+  description = "Cognito hosted-UI domain PREFIX for the ALB SSO gate."
+  type        = string
+  default     = ""
 }

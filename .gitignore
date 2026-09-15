@@ -13,12 +13,24 @@ override.tf
 override.tf.json
 *_override.tf
 *_override.tf.json
-terraform.tfvars        # holds account-specific values; commit terraform.tfvars.example instead
+# NOTE: terraform.tfvars IS tracked in this repo (it is the staging config).
+# It was previously listed here with a trailing '#' comment, which .gitignore
+# does not support — the whole line was read as one literal pattern and matched
+# nothing. Left tracked deliberately rather than silently ignored.
 
 # Keep .terraform.lock.hcl committed (provider version pinning) — do NOT ignore it.
 
 # SES Lambda build artifact
 ecs/terraform/.build/
+
+# Node (the bug-resolution MCP)
+node_modules/
+# npm lockfile ignored to match the wrapper repo's policy (pnpm is the lockfile
+# of record there). Reconsider if this MCP becomes independently versioned.
+package-lock.json
+
+# Local ECS scale-toggle state written by env-toggle.sh
+ecs/.env-toggle-state.json
 
 # OS cruft
 .DS_Store

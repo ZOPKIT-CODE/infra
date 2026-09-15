@@ -69,7 +69,7 @@ rds_publicly_accessible = true
 # NOTE: this is a dynamic IP — chasing it with /32s is what led someone to open
 # 0.0.0.0/0 in the first place. If it churns too often, restore the SSM bastion
 # (enable_bastion = true) instead of widening this list.
-rds_admin_cidrs         = ["157.50.86.215/32", "152.57.156.130/32"]
+rds_admin_cidrs = ["157.50.86.215/32", "152.57.156.130/32"]
 
 # Mathesar SSO gate DISABLED — single login via Mathesar's own accounts instead
 # of the ALB Cognito gate (Mathesar's native OIDC is still WIP upstream, so a

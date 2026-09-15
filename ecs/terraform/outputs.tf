@@ -1,7 +1,5 @@
-# ---------------------------------------------------------------------------
 # Outputs for the ECS Fargate stack: the ECS cluster, shared ALB, registry, messaging,
 # cache, Cognito, storage/CDN, secrets, and the per-service ECS handles.
-# ---------------------------------------------------------------------------
 
 output "region" {
   value = var.aws_region
@@ -43,15 +41,15 @@ output "ecr_repository_urls" {
 
 # --- Messaging ---
 output "sns_topic_arns" {
-  value = { for k, t in aws_sns_topic.topics : k => t.arn }
+  value = module.messaging.topic_arns
 }
 
 output "sqs_queue_urls" {
-  value = { for k, q in aws_sqs_queue.main : k => q.url }
+  value = module.messaging.queue_urls
 }
 
 output "sqs_dlq_urls" {
-  value = { for k, q in aws_sqs_queue.dlq : k => q.url }
+  value = module.messaging.dlq_urls
 }
 
 # --- Cache ---

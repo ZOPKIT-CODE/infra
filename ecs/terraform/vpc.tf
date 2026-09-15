@@ -1,4 +1,3 @@
-# ---------------------------------------------------------------------------
 # Core network substrate: VPC only (no EKS in this stack). Leaf .tf files
 # reference module.vpc.* and the locals defined in locals.tf.
 #
@@ -14,7 +13,6 @@
 #
 # No kubernetes.io/* subnet tags: the ALB here is created explicitly (alb.tf),
 # not auto-discovered by an in-cluster controller.
-# ---------------------------------------------------------------------------
 
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"

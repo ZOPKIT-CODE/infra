@@ -1,0 +1,197 @@
+# mathesar.tf — Mathesar (web DB UI) as an in-VPC ECS service.
+#
+# Reaches the RDS instance over the PRIVATE network (tasks SG → rds SG), so the DB
+# is never publicly exposed. Team accesses Mathesar at https://db.<root_domain>
+# (behind the shared ALB; wildcard cert covers it). Its own metadata lives in a
+# `mathesar_django` database on the RDS instance (created out-of-band via the
+# db-admin task). Gated by var.enabled.
+
+resource "random_password" "mathesar_db" {
+  count   = var.enabled ? 1 : 0
+  length  = 32
+  special = false
+}
+
+resource "random_password" "mathesar_secret_key" {
+  count   = var.enabled ? 1 : 0
+  length  = 50
+  special = false
+}
+
+resource "aws_secretsmanager_secret" "mathesar" {
+  count = var.enabled ? 1 : 0
+  name  = "zopkit/${var.environment}/mathesar"
+  tags  = var.tags
+}
+
+resource "aws_secretsmanager_secret_version" "mathesar" {
+  count     = var.enabled ? 1 : 0
+  secret_id = aws_secretsmanager_secret.mathesar[0].id
+  secret_string = jsonencode({
+    POSTGRES_PASSWORD = random_password.mathesar_db[0].result
+    SECRET_KEY        = random_password.mathesar_secret_key[0].result
+  })
+}
+
+# Allow the ALB to reach Mathesar's container port (8000) — the app SG rules only
+# cover local.services ports, so add Mathesar's explicitly.
+resource "aws_security_group_rule" "tasks_from_alb_mathesar" {
+  count                    = var.enabled ? 1 : 0
+  type                     = "ingress"
+  description              = "From ALB on Mathesar port 8000"
+  from_port                = 8000
+  to_port                  = 8000
+  protocol                 = "tcp"
+  security_group_id        = var.tasks_security_group_id
+  source_security_group_id = var.alb_security_group_id
+}
+
+resource "aws_cloudwatch_log_group" "mathesar" {
+  count             = var.enabled ? 1 : 0
+  name              = "/ecs/${var.name_prefix}/mathesar"
+  retention_in_days = 14
+  tags              = var.tags
+}
+
+resource "aws_ecs_task_definition" "mathesar" {
+  count                    = var.enabled ? 1 : 0
+  family                   = "${var.name_prefix}-mathesar"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = "512"
+  memory                   = "1024"
+  execution_role_arn       = var.execution_role_arn
+
+  container_definitions = jsonencode([{
+    name         = "mathesar"
+    image        = "mathesar/mathesar:latest"
+    essential    = true
+    portMappings = [{ containerPort = 8000, protocol = "tcp" }]
+    environment = [
+      { name = "POSTGRES_HOST", value = var.db_address },
+      { name = "POSTGRES_PORT", value = "5432" },
+      { name = "POSTGRES_DB", value = "mathesar_django" },
+      { name = "POSTGRES_USER", value = "mathesar" },
+      { name = "POSTGRES_SSLMODE", value = "require" },
+      # "*" because the ALB health check hits the target's PRIVATE IP with
+      # `Host: <ip>:8000`; a strict host list makes Django answer 400 → the check
+      # fails 5x → ECS kills the task → a ~9-minute restart loop (the service
+      # still "worked" via the real hostname between kills). Host-header strictness
+      # buys nothing here: the task SG only admits traffic FROM the ALB, and the
+      # ALB only forwards the db.<domain> host rule to this target group.
+      { name = "ALLOWED_HOSTS", value = "*" },
+    ]
+    secrets = [
+      { name = "POSTGRES_PASSWORD", valueFrom = "${aws_secretsmanager_secret.mathesar[0].arn}:POSTGRES_PASSWORD::" },
+      { name = "SECRET_KEY", valueFrom = "${aws_secretsmanager_secret.mathesar[0].arn}:SECRET_KEY::" },
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        "awslogs-group"         = aws_cloudwatch_log_group.mathesar[0].name
+        "awslogs-region"        = var.aws_region
+        "awslogs-stream-prefix" = "mathesar"
+      }
+    }
+  }])
+
+  tags = var.tags
+}
+
+resource "aws_lb_target_group" "mathesar" {
+  count       = var.enabled ? 1 : 0
+  name        = "${var.name_prefix}-mathesar"
+  port        = 8000
+  protocol    = "HTTP"
+  vpc_id      = var.vpc_id
+  target_type = "ip"
+
+  health_check {
+    path                = "/"
+    matcher             = "200,301,302"
+    interval            = 30
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 5
+  }
+
+  tags = var.tags
+}
+
+resource "aws_lb_listener_rule" "mathesar" {
+  count        = var.enabled ? 1 : 0
+  listener_arn = var.alb_listener_arn
+  # Must out-prioritize the tenant_wildcard rule (priority 11, matches
+  # *.<root_domain> incl. db.<root_domain>) so db. routes to Mathesar, not wrapper.
+  priority = 5
+
+  # SSO gate first (only when configured).
+  dynamic "action" {
+    for_each = var.mathesar_cognito_client_id != "" ? [1] : []
+    content {
+      type  = "authenticate-cognito"
+      order = 1
+      authenticate_cognito {
+        user_pool_arn              = var.mathesar_cognito_user_pool_arn
+        user_pool_client_id        = var.mathesar_cognito_client_id
+        user_pool_domain           = var.mathesar_cognito_domain
+        scope                      = "openid email profile"
+        on_unauthenticated_request = "authenticate"
+        session_timeout            = 43200
+      }
+    }
+  }
+
+  action {
+    type             = "forward"
+    order            = var.mathesar_cognito_client_id != "" ? 2 : 1
+    target_group_arn = aws_lb_target_group.mathesar[0].arn
+  }
+
+  condition {
+    host_header {
+      values = ["db.${var.root_domain}"]
+    }
+  }
+}
+
+resource "aws_ecs_service" "mathesar" {
+  count           = var.enabled ? 1 : 0
+  name            = "${var.name_prefix}-mathesar"
+  cluster         = var.cluster_id
+  task_definition = aws_ecs_task_definition.mathesar[0].arn
+  desired_count   = 1
+  launch_type     = "FARGATE"
+
+  network_configuration {
+    subnets          = var.fargate_assign_public_ip ? var.public_subnet_ids : var.private_subnet_ids
+    security_groups  = [var.tasks_security_group_id]
+    assign_public_ip = var.fargate_assign_public_ip
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.mathesar[0].arn
+    container_name   = "mathesar"
+    container_port   = 8000
+  }
+
+  # ALB rule must exist before the service registers targets.
+  depends_on = [aws_lb_listener_rule.mathesar]
+
+  tags = var.tags
+}
+
+# db.<root_domain> → shared ALB.
+resource "aws_route53_record" "mathesar" {
+  count   = var.enabled ? 1 : 0
+  zone_id = var.route53_zone_id
+  name    = "db.${var.root_domain}"
+  type    = "A"
+
+  alias {
+    name                   = var.alb_dns_name
+    zone_id                = var.alb_zone_id
+    evaluate_target_health = true
+  }
+}
+

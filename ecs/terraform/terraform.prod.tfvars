@@ -7,6 +7,7 @@
 #   Wave 2 (flip live traffic):               manage_apex_dns = true
 # The legacy EC2 box (i-085cb714d4af4a499 / EIP 35.171.71.112) stays up as rollback
 # until prod is soaked, then is decommissioned.
+
 project     = "zopkit"
 environment = "prod"
 aws_region  = "us-east-1"
@@ -14,6 +15,7 @@ data_region = "us-east-1"
 
 # Real apex domain. The zopkit.com hosted zone already exists (registrar-managed),
 # so look it up rather than create it.
+
 root_domain         = "zopkit.com"
 create_route53_zone = false
 
@@ -23,18 +25,22 @@ create_route53_zone = false
 #   - apex_frontend_app="wrapper" -> zopkit.com (apex) ALSO serves the wrapper SPA.
 # Records created (allow_overwrite): zopkit.com + app.zopkit.com -> CloudFront,
 # api.zopkit.com -> ALB, *.zopkit.com -> ALB. The legacy EC2 box stays up as rollback.
+
 manage_apex_dns    = true
 dns_only_live_apps = true
 apex_frontend_app  = "wrapper"
 
 # Same networking posture as staging (public-IP, no NAT) until an EIP-quota increase
 # lets prod move to private subnets + NAT.
+
 fargate_assign_public_ip = true
 single_nat_gateway       = true
 
 # Reuse the shared zopkit-platform Cognito pool (Google federation + clients already
 # configured). The prod apex callback URLs (https://api.zopkit.com/api/auth/callback,
 # https://app.zopkit.com) are appended to the shared wrapper client out-of-band.
+
+
 cognito_user_pool_id           = "us-east-1_6e8AY4eMj"
 cognito_existing_domain_prefix = "zopkit-platform-ay4emj"
 cognito_client_ids = {
@@ -66,6 +72,8 @@ manage_ecr = false
 # Cutover off Supabase. Private (publicly_accessible=false → intra subnets, reach
 # via SSM bastion), prod-grade (deletion protection + final snapshot). Mathesar is
 # NOT deployed in prod (enable_mathesar defaults false — no public DB UI).
+
+
 enable_rds              = true
 rds_publicly_accessible = false
 rds_admin_cidrs         = []
@@ -73,7 +81,7 @@ rds_instance_class      = "db.t4g.small"
 rds_deletion_protection = true
 rds_skip_final_snapshot = false
 
-enable_mathesar         = false   # NO public DB UI in prod
+enable_mathesar = false # NO public DB UI in prod
 
 # Disabled during the no-real-users testing phase to stop paying for it (2 nodes,
 # ~$24/mo) - REDIS_ENABLED and REDIS_URL/PASSWORD secret injection drop for every

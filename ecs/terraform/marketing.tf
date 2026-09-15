@@ -35,11 +35,11 @@ resource "aws_cloudfront_distribution" "marketing" {
 
     custom_origin_config {
       http_port                = 80
-      https_port                = 443
-      origin_protocol_policy    = "https-only"
-      origin_ssl_protocols      = ["TLSv1.2"]
-      origin_read_timeout       = 30
-      origin_keepalive_timeout  = 5
+      https_port               = 443
+      origin_protocol_policy   = "https-only"
+      origin_ssl_protocols     = ["TLSv1.2"]
+      origin_read_timeout      = 30
+      origin_keepalive_timeout = 5
     }
   }
 
@@ -130,12 +130,10 @@ resource "aws_cloudfront_distribution" "marketing" {
   }
 }
 
-# ---------------------------------------------------------------------------
 # Lambda@Edge: origin-request bot router for /blog* (lambda/blog-bot-router).
 # Must be created in us-east-1 (provider aws.us_east_1 - same alias already
 # used for the CloudFront ACM cert in route53_acm.tf) and referenced by a
 # PUBLISHED, QUALIFIED version ARN - CloudFront rejects $LATEST/aliases here.
-# ---------------------------------------------------------------------------
 data "archive_file" "blog_bot_router" {
   type        = "zip"
   source_dir  = "${path.module}/lambda/blog-bot-router"

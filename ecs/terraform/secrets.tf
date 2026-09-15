@@ -133,7 +133,7 @@ locals {
       "DATABASE_URL",
       "DIRECT_URL",
       "MIGRATION_DATABASE_URL", # privileged (migrator role) — one-off migrate task only; app uses least-privilege DATABASE_URL
-      "DATABASE_SSL_CA", # Supabase's "Supabase Root 2021 CA" root cert (PEM), pinned for verify-full - see backend/db/index.ts
+      "DATABASE_SSL_CA",        # Supabase's "Supabase Root 2021 CA" root cert (PEM), pinned for verify-full - see backend/db/index.ts
       "JWT_SECRET",
       # Cognito SSO (shared zopkit-platform pool; confidential lens app client —
       # see backend/docs/COGNITO-SSO.md in the lens repo. Provisioned out-of-band, not Terraform).

@@ -1,4 +1,3 @@
-# ---------------------------------------------------------------------------
 # ecs.tf — Shared ECS Fargate cluster + capacity providers + the ECS task
 # security group.
 #
@@ -12,7 +11,6 @@
 # the cheapest layout for staging. The task SG below admits traffic ONLY from
 # the ALB SG (on the three container ports); fa-consumer has no port mapping
 # and simply needs no ingress.
-# ---------------------------------------------------------------------------
 
 resource "aws_ecs_cluster" "this" {
   name = "${local.name_prefix}-ecs"
@@ -42,8 +40,7 @@ resource "aws_ecs_cluster_capacity_providers" "this" {
   }
 }
 
-# ---------------------------------------------------------------------------
-# ECS task security group. Shared by all four services' task ENIs.
+# ECS task security group. Shared by every service's task ENIs.
 #
 #   ingress: each distinct web container port (3000 wrapper, 4000 crm,
 #            3002 fa) FROM the ALB security group ONLY (no CIDR ingress).
@@ -52,7 +49,6 @@ resource "aws_ecs_cluster_capacity_providers" "this" {
 # fa-consumer shares this SG but maps no port, so the unused ingress rules are
 # harmless for it. Valkey ingress (6379) is granted on the Valkey SG itself
 # (see elasticache.tf), keyed off THIS security group.
-# ---------------------------------------------------------------------------
 resource "aws_security_group" "tasks" {
   name        = "${local.name_prefix}-ecs-tasks"
   description = "ECS Fargate task ENIs - ingress from ALB on container ports, egress all"

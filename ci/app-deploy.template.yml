@@ -29,7 +29,8 @@ name: deploy
 env:
   SERVICE: entertainment-erp-web                 # key in deploy/ecs/services.json
   ECR_REPO: entertainment-erp-backend            # ECR repository name
-  DOCKERFILE: server/Dockerfile                  # relative to the build context
+  DOCKERFILE: server/
+                 # relative to the build context
   BUILD_CONTEXT: .                               # usually the repo root
   BUILD_TARGET: production                       # multi-stage target; "" if the final stage is unnamed
   # These are the same for every app — do not change them.

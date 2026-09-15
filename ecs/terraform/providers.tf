@@ -1,4 +1,3 @@
-# ---------------------------------------------------------------------------
 # Providers.
 #
 # - aws            : primary region (everything: ECS Fargate, ALB, SNS/SQS,
@@ -11,7 +10,6 @@
 #
 # NOTE: there are intentionally NO kubernetes/helm providers — this stack runs
 # the suite on ECS Fargate, not EKS.
-# ---------------------------------------------------------------------------
 provider "aws" {
   region = var.aws_region
   default_tags {

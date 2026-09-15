@@ -7,10 +7,8 @@
 # route53_acm.tf; API + *.zopkit.com records are managed by external-dns. This file
 # owns the frontend bucket policies (s3.tf intentionally does NOT define them).
 
-# ---------------------------------------------------------------------------
 # Origin Access Control — shared by all three distributions. SigV4 signing,
 # always sign, S3 origin type. Replaces the legacy OAI mechanism.
-# ---------------------------------------------------------------------------
 resource "aws_cloudfront_origin_access_control" "this" {
   name                              = "${local.name_prefix}-fe-oac"
   description                       = "OAC for Zopkit frontend S3 origins"
@@ -19,7 +17,6 @@ resource "aws_cloudfront_origin_access_control" "this" {
   signing_protocol                  = "sigv4"
 }
 
-# ---------------------------------------------------------------------------
 # SPA routing via edge function instead of custom_error_response, for apps that
 # also proxy /api/* through this same distribution (cdn_proxies_api = true).
 # custom_error_response (403/404 -> index.html) applies DISTRIBUTION-WIDE, not
@@ -57,13 +54,11 @@ resource "aws_cloudfront_function" "spa_routing" {
   JS
 }
 
-# ---------------------------------------------------------------------------
 # One CloudFront distribution per frontend SPA. Backed by the matching private
 # S3 bucket (local.frontends[*].bucket -> aws_s3_bucket.buckets[*]). SPA routing:
 # 403/404 from S3 are rewritten to /index.html with a 200 so client-side routes
 # (React Router etc.) resolve. TLS via the us-east-1 ACM cert (CloudFront only
 # trusts certs in us-east-1).
-# ---------------------------------------------------------------------------
 resource "aws_cloudfront_distribution" "frontends" {
   for_each = local.frontends
 
@@ -98,9 +93,9 @@ resource "aws_cloudfront_distribution" "frontends" {
       origin_id   = "alb-${each.key}"
       custom_origin_config {
         http_port              = 80
-        https_port              = 443
+        https_port             = 443
         origin_protocol_policy = "https-only"
-        origin_ssl_protocols    = ["TLSv1.2"]
+        origin_ssl_protocols   = ["TLSv1.2"]
         # Default (30s) is shorter than the ALB's own idle_timeout (60s), so CloudFront was
         # returning 504 before the ALB/backend even timed out - on cross-region DB queries
         # (Supabase in ap-northeast-1) that run close to the ALB's timeout. Match the ALB's 60s
@@ -118,8 +113,8 @@ resource "aws_cloudfront_distribution" "frontends" {
       target_origin_id       = "alb-${each.key}"
       viewer_protocol_policy = "redirect-to-https"
       allowed_methods        = ["GET", "HEAD", "OPTIONS", "PUT", "POST", "PATCH", "DELETE"]
-      cached_methods          = ["GET", "HEAD"]
-      compress                = true
+      cached_methods         = ["GET", "HEAD"]
+      compress               = true
 
       # AWS managed "CachingDisabled" - API responses are dynamic, never cache.
       cache_policy_id = "4135ea2d-6df8-44a3-9df3-4b5a84be39ad"
@@ -193,12 +188,10 @@ resource "aws_cloudfront_distribution" "frontends" {
   }
 }
 
-# ---------------------------------------------------------------------------
 # Frontend bucket policies — grant CloudFront (this distribution only) read
 # access to the bucket objects. Scoped by AWS:SourceArn so no other distribution
 # or principal can read the private origin. s3.tf owns the public-access-block /
 # versioning / encryption for these buckets; this file owns ONLY the policy.
-# ---------------------------------------------------------------------------
 data "aws_iam_policy_document" "frontend_bucket" {
   for_each = local.frontends
 

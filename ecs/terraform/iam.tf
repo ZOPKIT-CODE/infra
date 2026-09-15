@@ -1,4 +1,3 @@
-# ---------------------------------------------------------------------------
 # iam.tf — ECS task roles + ONE shared execution role. No OIDC/IRSA: ECS hands
 # each task its role directly.
 #
@@ -10,7 +9,6 @@
 #       CloudWatch logs) plus an inline secretsmanager:GetSecretValue grant on
 #       the app + valkey secrets so the agent can resolve the task def `secrets`
 #       valueFrom ARNs at launch.
-# ---------------------------------------------------------------------------
 
 # =============================================================================
 # (A) Task-role trust — principal is the ECS tasks service, NOT an OIDC IdP.
@@ -50,7 +48,7 @@ data "aws_iam_policy_document" "wrapper" {
     sid       = "SnsPublish"
     effect    = "Allow"
     actions   = ["sns:Publish"]
-    resources = [for k in ["inter_app_events", "inter_app_broadcast"] : aws_sns_topic.topics[k].arn]
+    resources = [for k in ["inter_app_events", "inter_app_broadcast"] : module.messaging.topic_arns[k]]
   }
 
   # SQS consume + send on wrapper_events + the three notification queues.
@@ -66,7 +64,7 @@ data "aws_iam_policy_document" "wrapper" {
     ]
     resources = [
       for k in ["wrapper_events", "notifications_immediate", "notifications_bulk", "notifications_scheduled"] :
-      aws_sqs_queue.main[k].arn
+      module.messaging.queue_arns[k]
     ]
   }
 
@@ -77,7 +75,7 @@ data "aws_iam_policy_document" "wrapper" {
     actions = ["sqs:SendMessage"]
     resources = [
       for k in ["wrapper_events", "notifications_immediate", "notifications_bulk", "notifications_scheduled"] :
-      aws_sqs_queue.dlq[k].arn
+      module.messaging.dlq_arns[k]
     ]
   }
 
@@ -159,7 +157,7 @@ data "aws_iam_policy_document" "crm" {
       "sqs:SendMessage",
     ]
     resources = [
-      for k in ["crm_events", "business_events_crm"] : aws_sqs_queue.main[k].arn
+      for k in ["crm_events", "business_events_crm"] : module.messaging.queue_arns[k]
     ]
   }
 
@@ -168,7 +166,7 @@ data "aws_iam_policy_document" "crm" {
     effect  = "Allow"
     actions = ["sqs:SendMessage"]
     resources = [
-      for k in ["crm_events", "business_events_crm"] : aws_sqs_queue.dlq[k].arn
+      for k in ["crm_events", "business_events_crm"] : module.messaging.dlq_arns[k]
     ]
   }
 
@@ -177,7 +175,7 @@ data "aws_iam_policy_document" "crm" {
     sid       = "BusinessEventsPublish"
     effect    = "Allow"
     actions   = ["sns:Publish"]
-    resources = [aws_sns_topic.topics["business_events"].arn]
+    resources = [module.messaging.topic_arns["business_events"]]
   }
 
   # SES send. SES email-sending authorization is identity/configuration-set
@@ -245,7 +243,7 @@ data "aws_iam_policy_document" "fa" {
     sid       = "BusinessEventsPublish"
     effect    = "Allow"
     actions   = ["sns:Publish"]
-    resources = [aws_sns_topic.topics["business_events"].arn]
+    resources = [module.messaging.topic_arns["business_events"]]
   }
 
   statement {
@@ -259,7 +257,7 @@ data "aws_iam_policy_document" "fa" {
       "sqs:SendMessage",
     ]
     resources = [
-      for k in ["accounting_events", "business_events_fa"] : aws_sqs_queue.main[k].arn
+      for k in ["accounting_events", "business_events_fa"] : module.messaging.queue_arns[k]
     ]
   }
 
@@ -268,7 +266,7 @@ data "aws_iam_policy_document" "fa" {
     effect  = "Allow"
     actions = ["sqs:SendMessage"]
     resources = [
-      for k in ["accounting_events", "business_events_fa"] : aws_sqs_queue.dlq[k].arn
+      for k in ["accounting_events", "business_events_fa"] : module.messaging.dlq_arns[k]
     ]
   }
 
@@ -371,7 +369,7 @@ data "aws_iam_policy_document" "execution_secrets" {
       var.enable_valkey ? [aws_secretsmanager_secret.valkey[0].arn] : [],
       # RDS rollout: master (db-admin provisioning task); mathesar secret only when deployed.
       var.enable_rds ? [aws_secretsmanager_secret.rds_master[0].arn] : [],
-      var.enable_rds && var.enable_mathesar ? [aws_secretsmanager_secret.mathesar[0].arn] : [],
+      compact([module.mathesar.secret_arn]),
     )
   }
 }

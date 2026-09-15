@@ -1,4 +1,3 @@
-# ---------------------------------------------------------------------------
 # Provider + Terraform version constraints for the Zopkit suite ECS Fargate IaC.
 #
 # This is a self-contained ECS Fargate stack (no EKS / Kubernetes / Helm) and the
@@ -6,7 +5,6 @@
 # SNS/SQS, S3, CloudFront, ECR, Secrets Manager) plus the compute layer: ECS
 # Fargate + a shared ALB + task roles + native Secrets Manager injection +
 # Terraform-managed Route53 records.
-# ---------------------------------------------------------------------------
 terraform {
   required_version = ">= 1.6.0"
 

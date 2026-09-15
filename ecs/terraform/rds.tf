@@ -8,56 +8,6 @@
 # One instance hosts all app databases (wrapper_<env>, crm_<env>, …); each app
 # gets its own database + least-privilege roles, created out-of-band after apply.
 
-variable "enable_rds" {
-  description = "Provision the RDS Postgres instance in this environment."
-  type        = bool
-  default     = false
-}
-
-variable "rds_instance_class" {
-  description = "RDS instance class. t4g.micro for staging; bump to t4g.medium for a prod instance hosting several app DBs."
-  type        = string
-  default     = "db.t4g.micro"
-}
-
-variable "rds_admin_cidrs" {
-  description = "Admin IP CIDRs allowed to reach the staging DB directly (for seeding + GUI/MCP). Empty = ECS-tasks-only. Use [] for prod (private)."
-  type        = list(string)
-  default     = []
-}
-
-variable "enable_bastion" {
-  description = <<-EOT
-    Create the SSM bastion (EC2 + IAM role/profile + SG) used to port-forward to a
-    PRIVATE RDS. Off: the staging RDS is publicly accessible and db-tunnel.sh /
-    mcp-db.sh connect to it directly via the rds_admin_cidrs allow-list — no bastion
-    in the path. Both environments' bastion instances were terminated out-of-band
-    well before this flag existed, so leaving it off matches reality. Turn it back
-    on only if RDS moves to private subnets (rds_publicly_accessible = false).
-  EOT
-  type        = bool
-  default     = false
-}
-
-variable "rds_publicly_accessible" {
-  description = "Staging convenience (true) vs prod security (false → private subnets, reach via SSM/VPN)."
-  type        = bool
-  default     = false
-}
-
-
-variable "rds_deletion_protection" {
-  description = "Protect the DB from accidental deletion (true for prod)."
-  type        = bool
-  default     = false
-}
-
-variable "rds_skip_final_snapshot" {
-  description = "Skip the final snapshot on destroy (true for staging convenience; FALSE for prod)."
-  type        = bool
-  default     = true
-}
-
 # Master/superuser password — used only to create per-app databases + roles.
 resource "random_password" "rds_master" {
   count   = var.enable_rds ? 1 : 0

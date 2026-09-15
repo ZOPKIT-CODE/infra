@@ -5,20 +5,6 @@
 # yielding exactly: "wrapper-backend", "crm-backend", "fa-backend".
 # outputs.tf consumes aws_ecr_repository.repos[<reponame>].repository_url.
 
-# ECR repos are NOT env-prefixed (image names are shared across environments), so
-# exactly ONE workspace creates them; others reference them. Toggle with manage_ecr.
-variable "mutable_tag_repos" {
-  description = "ECR repositories still publishing a moving tag, so they must stay MUTABLE. Remove an entry once its build emits git-SHA tags — see deploy/ecs/ONBOARDING.md."
-  type        = set(string)
-  default     = ["entertainment-erp-backend"]
-}
-
-variable "manage_ecr" {
-  description = "Create the shared ECR repositories (true) or look them up (false). One env owns them; secondary envs (e.g. prod) reference the same images."
-  type        = bool
-  default     = true
-}
-
 locals {
   ecr_repo_names = toset(distinct([for a in local.apps : a.ecr_repo]))
   # Resolve repo URLs from whichever source is active, so consumers don't branch.

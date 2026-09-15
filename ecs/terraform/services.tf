@@ -1,22 +1,8 @@
-# ---------------------------------------------------------------------------
-# services.tf — Instantiates modules/ecs-service once per entry in
-# local.services (the 4-service ECS contract: wrapper-web, crm-web, fa-web,
-# fa-consumer). Each invocation wires:
-#   - image    = "<ecr repo url>:<image_tag>"  (repo keyed by svc.ecr_repo)
-#   - environment = local.service_env[svc.app]     (plain env)
-#   - secrets     = local.service_secrets[svc.app]  (deduped valueFrom map)
-#   - task_role_arn      = aws_iam_role.task[svc.role].arn  (fa-web + fa-consumer share "fa")
-#   - execution_role_arn = aws_iam_role.execution.arn       (shared)
-#   - log_group_name     = aws_cloudwatch_log_group.service[<name>].name
-#   - subnets / SG / assign_public_ip per var.fargate_assign_public_ip
-#   - ALB wiring (listener arn + TG host/health/stickiness/priority) for the
-#     three web services; fa-consumer is headless (needs_alb = false) with a
-#     command override.
+# Instantiates modules/ecs-service once per enabled entry in local.services.
 #
-# DEDUP GUARANTEE: environment and secrets are taken from the SAME svc.app, so
-# local.service_secrets already excludes any key present in local.service_env
-# (ECS rejects a key appearing in both blocks).
-# ---------------------------------------------------------------------------
+# DEDUP GUARANTEE: environment and secrets are read from the SAME svc.app, so
+# local.service_secrets already excludes any key present in local.service_env —
+# ECS rejects a key appearing in both blocks.
 
 # The deployed tag for each service lives in SSM Parameter Store
 # (/<project>/<env>/deployed-tag/<service>), written by every release path
@@ -64,7 +50,7 @@ module "services" {
   execution_role_arn = aws_iam_role.execution.arn
   task_role_arn      = aws_iam_role.task[each.value.role].arn
 
-  log_group_name = aws_cloudwatch_log_group.service[each.key].name
+  log_group_name = module.observability.log_group_names[each.key]
 
   # --- ECS service / networking ---
   desired_count           = each.value.desired_count
@@ -80,12 +66,12 @@ module "services" {
   host_header            = each.value.host_header
   # Additional hostnames on the same listener rule, for services that front both an
   # API and a SPA (entertainment-erp). Absent = just host_header.
-  extra_host_headers     = try(each.value.extra_host_headers, [])
-  health_check_path      = each.value.health_check_path
-  stickiness_enabled     = each.value.stickiness_enabled
+  extra_host_headers = try(each.value.extra_host_headers, [])
+  health_check_path  = each.value.health_check_path
+  stickiness_enabled = each.value.stickiness_enabled
   # Adopt a pre-existing group name where one differs from the generated
   # "<prefix>-<service>" (academy-web's is ...-academy-tg). Absent = generated.
-  target_group_name      = try(each.value.target_group_name, null)
+  target_group_name                 = try(each.value.target_group_name, null)
   health_check_grace_period_seconds = each.value.health_check_grace_period_seconds
 
   # --- Autoscaling (wrapper-web only; others pinned) ---

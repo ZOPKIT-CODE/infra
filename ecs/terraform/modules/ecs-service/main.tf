@@ -11,9 +11,7 @@
 # passed in via var.log_group_name; this module does NOT create it.
 ###############################################################################
 
-# ---------------------------------------------------------------------------
 # 1. Task definition
-# ---------------------------------------------------------------------------
 resource "aws_ecs_task_definition" "this" {
   family                   = "${var.name_prefix}-${var.name}"
   requires_compatibilities = ["FARGATE"]
@@ -54,9 +52,7 @@ resource "aws_ecs_task_definition" "this" {
   tags = var.tags
 }
 
-# ---------------------------------------------------------------------------
 # 2. Target group (web services only)
-# ---------------------------------------------------------------------------
 resource "aws_lb_target_group" "this" {
   count = var.needs_alb ? 1 : 0
 
@@ -95,9 +91,7 @@ resource "aws_lb_target_group" "this" {
   tags = var.tags
 }
 
-# ---------------------------------------------------------------------------
 # 3. Listener rule (web services only)
-# ---------------------------------------------------------------------------
 resource "aws_lb_listener_rule" "this" {
   count = var.needs_alb ? 1 : 0
 
@@ -118,14 +112,12 @@ resource "aws_lb_listener_rule" "this" {
   tags = var.tags
 }
 
-# ---------------------------------------------------------------------------
 # 4. ECS service
 #
 # ignore_changes = [desired_count] is set unconditionally: it is safe for
 # pinned services (Terraform still sets the initial count on create) and
 # required for autoscaled services (so the appautoscaling-driven count is not
 # reverted on every apply).
-# ---------------------------------------------------------------------------
 resource "aws_ecs_service" "this" {
   name            = "${var.name_prefix}-${var.name}"
   cluster         = var.cluster_arn
@@ -159,9 +151,7 @@ resource "aws_ecs_service" "this" {
   tags = var.tags
 }
 
-# ---------------------------------------------------------------------------
 # 5. Autoscaling target (autoscaled services only)
-# ---------------------------------------------------------------------------
 resource "aws_appautoscaling_target" "this" {
   count = var.autoscaling_enabled ? 1 : 0
 
@@ -172,9 +162,7 @@ resource "aws_appautoscaling_target" "this" {
   service_namespace  = "ecs"
 }
 
-# ---------------------------------------------------------------------------
 # 6. Autoscaling policy — CPU target tracking (autoscaled services only)
-# ---------------------------------------------------------------------------
 resource "aws_appautoscaling_policy" "cpu" {
   count = var.autoscaling_enabled ? 1 : 0
 

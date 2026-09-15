@@ -4,19 +4,15 @@
 # (REDIS_ENABLED + fleet-wide invalidation on channel authz:invalidate). The
 # generated REDIS_URL/credentials land in Secrets Manager for the apps to read.
 
-# ---------------------------------------------------------------------------
 # Auth token (Valkey AUTH). 48 chars, no special chars to keep the URL clean.
-# ---------------------------------------------------------------------------
 resource "random_password" "valkey" {
   count   = var.enable_valkey ? 1 : 0
   length  = 48
   special = false
 }
 
-# ---------------------------------------------------------------------------
 # Security group: allow 6379 from the ECS task security group (the Fargate
 # task ENIs). Egress open.
-# ---------------------------------------------------------------------------
 resource "aws_security_group" "valkey" {
   count       = var.enable_valkey ? 1 : 0
   name        = "${local.name_prefix}-valkey"
@@ -44,9 +40,7 @@ resource "aws_security_group" "valkey" {
   }
 }
 
-# ---------------------------------------------------------------------------
 # Subnet group on the VPC intra (private, no NAT) subnets.
-# ---------------------------------------------------------------------------
 resource "aws_elasticache_subnet_group" "valkey" {
   count      = var.enable_valkey ? 1 : 0
   name       = "${local.name_prefix}-valkey"
@@ -57,13 +51,11 @@ resource "aws_elasticache_subnet_group" "valkey" {
   }
 }
 
-# ---------------------------------------------------------------------------
 # Replication group (cluster-mode disabled). One primary + var.valkey_replicas
 # read replicas. Failover/Multi-AZ only make sense when replicas exist.
 # Encryption in transit (TLS) + at rest, AUTH token enabled.
-# ---------------------------------------------------------------------------
 resource "aws_elasticache_replication_group" "valkey" {
-  count                 = var.enable_valkey ? 1 : 0
+  count                = var.enable_valkey ? 1 : 0
   replication_group_id = "${local.name_prefix}-valkey"
   description          = "Zopkit suite Valkey cache (cluster-mode disabled)"
 
@@ -95,11 +87,9 @@ resource "aws_elasticache_replication_group" "valkey" {
   }
 }
 
-# ---------------------------------------------------------------------------
 # Secrets Manager: connection details for the apps (injected into ECS tasks via
 # the task def 'secrets' block). REDIS_URL uses the rediss:// (TLS) scheme +
 # AUTH token + primary endpoint.
-# ---------------------------------------------------------------------------
 resource "aws_secretsmanager_secret" "valkey" {
   count       = var.enable_valkey ? 1 : 0
   name        = "${var.project}/${var.environment}/valkey"

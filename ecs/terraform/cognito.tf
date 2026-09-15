@@ -5,9 +5,7 @@
 #   aws_cognito_user_pool_domain.this
 #   aws_cognito_user_pool_client.clients[<app>]  (apps with cognito_client = true)
 
-# ---------------------------------------------------------------------------
 # User pool
-# ---------------------------------------------------------------------------
 resource "aws_cognito_user_pool" "this" {
   name = "${local.name_prefix}-users"
 
@@ -79,17 +77,13 @@ resource "aws_cognito_user_pool" "this" {
   }
 }
 
-# ---------------------------------------------------------------------------
 # Hosted UI domain (Cognito-managed prefix domain)
-# ---------------------------------------------------------------------------
 resource "aws_cognito_user_pool_domain" "this" {
   domain       = "${var.cognito_domain_prefix}-${var.environment}"
   user_pool_id = aws_cognito_user_pool.this.id
 }
 
-# ---------------------------------------------------------------------------
 # Per-app app clients (public clients — no secret; PKCE/SRP from SPAs+backends)
-# ---------------------------------------------------------------------------
 resource "aws_cognito_user_pool_client" "clients" {
   # Opt-in per app. An adopted app can bring its own IdP (academy uses Google
   # OAuth + Supabase), and creating a pool client it never calls is dead config
