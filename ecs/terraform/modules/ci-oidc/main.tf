@@ -155,10 +155,23 @@ data "aws_iam_policy_document" "infra_apply_trust" {
     }
     # Assumable ONLY from a job pinned to the infra-* GitHub environments, so the
     # environment's protection rules (required reviewers) gate every infra apply.
+    #
+    # BOTH repos are trusted during the IaC migration: infra-apply.yml still runs
+    # from ZOPKIT-CODE/Wrapper today and moves to ZOPKIT-CODE/infra once this
+    # policy is applied. Drop the Wrapper entries after the workflow has moved.
+    #
+    # The @*/…@* forms match the org's custom OIDC subject-claim template, which
+    # embeds numeric owner/repo IDs — see github_deploy_trust above. The plain
+    # form alone does NOT match for org repos using that template.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:ZOPKIT-CODE/Wrapper:environment:infra-*"]
+      values = [
+        "repo:ZOPKIT-CODE/Wrapper:environment:infra-*",
+        "repo:ZOPKIT-CODE/infra:environment:infra-*",
+        "repo:ZOPKIT-CODE@*/Wrapper@*:environment:infra-*",
+        "repo:ZOPKIT-CODE@*/infra@*:environment:infra-*",
+      ]
     }
   }
 }

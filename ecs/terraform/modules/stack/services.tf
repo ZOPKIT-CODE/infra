@@ -19,7 +19,7 @@ data "aws_ssm_parameter" "deployed_tag" {
 }
 
 module "services" {
-  source = "./modules/ecs-service"
+  source = "../ecs-service"
   # Only stand up services flagged enabled (gradual rollout: wrapper now, CRM/FA
   # later by flipping `enabled = true` in local.services). The shared foundation
   # (VPC, cluster, ALB, ECR, SNS/SQS incl. the CRM/FA queues that BUFFER wrapper's

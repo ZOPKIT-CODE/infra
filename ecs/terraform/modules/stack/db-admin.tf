@@ -1,5 +1,5 @@
 module "db_admin" {
-  source = "./modules/db-admin"
+  source = "../db-admin"
 
   name_prefix           = local.name_prefix
   enabled               = var.enable_rds
@@ -9,13 +9,3 @@ module "db_admin" {
   tags                  = local.common_tags
 }
 
-# Address migration: moved from this file into ./modules/db-admin.
-moved {
-  from = aws_cloudwatch_log_group.db_admin
-  to   = module.db_admin.aws_cloudwatch_log_group.db_admin
-}
-
-moved {
-  from = aws_ecs_task_definition.db_admin
-  to   = module.db_admin.aws_ecs_task_definition.db_admin
-}

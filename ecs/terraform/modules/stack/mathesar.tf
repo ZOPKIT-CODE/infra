@@ -1,5 +1,5 @@
 module "mathesar" {
-  source = "./modules/mathesar"
+  source = "../mathesar"
 
   name_prefix = local.name_prefix
   enabled     = var.enable_mathesar && var.enable_rds
@@ -30,66 +30,10 @@ module "mathesar" {
   tags = local.common_tags
 }
 
-# Address migration: moved from this file into ./modules/mathesar.
 #
 # The two random_password resources are the dangerous ones — without a moved
 # block Terraform would generate NEW values, silently rotating Mathesar's DB
 # password and Django secret key away from what the running service holds.
-moved {
-  from = random_password.mathesar_db
-  to   = module.mathesar.random_password.mathesar_db
-}
-
-moved {
-  from = random_password.mathesar_secret_key
-  to   = module.mathesar.random_password.mathesar_secret_key
-}
-
-moved {
-  from = aws_secretsmanager_secret.mathesar
-  to   = module.mathesar.aws_secretsmanager_secret.mathesar
-}
-
-moved {
-  from = aws_secretsmanager_secret_version.mathesar
-  to   = module.mathesar.aws_secretsmanager_secret_version.mathesar
-}
-
-moved {
-  from = aws_security_group_rule.tasks_from_alb_mathesar
-  to   = module.mathesar.aws_security_group_rule.tasks_from_alb_mathesar
-}
-
-moved {
-  from = aws_cloudwatch_log_group.mathesar
-  to   = module.mathesar.aws_cloudwatch_log_group.mathesar
-}
-
-moved {
-  from = aws_ecs_task_definition.mathesar
-  to   = module.mathesar.aws_ecs_task_definition.mathesar
-}
-
-moved {
-  from = aws_lb_target_group.mathesar
-  to   = module.mathesar.aws_lb_target_group.mathesar
-}
-
-moved {
-  from = aws_lb_listener_rule.mathesar
-  to   = module.mathesar.aws_lb_listener_rule.mathesar
-}
-
-moved {
-  from = aws_ecs_service.mathesar
-  to   = module.mathesar.aws_ecs_service.mathesar
-}
-
-moved {
-  from = aws_route53_record.mathesar
-  to   = module.mathesar.aws_route53_record.mathesar
-}
-
 # Re-exported so the root output surface is unchanged by the move.
 output "mathesar_url" {
   description = "Mathesar UI URL. Null when the service is disabled."
