@@ -50,21 +50,20 @@ override and shares the `fa` task role + `fa` env/secrets with `fa-web`.
 This stack applies in **one shot** — there is no in-cluster bootstrap phase.
 
 ```bash
-# pick an isolated workspace per environment
-terraform workspace new staging   # first time
-terraform workspace select staging
-
+# The directory IS the environment — no `terraform workspace select`.
+# Each environments/<env> has its own backend key and auto-loads its own tfvars.
+cd environments/staging    # or environments/prod
 terraform init
-terraform plan  -var-file=terraform.staging.tfvars
-terraform apply -var-file=terraform.staging.tfvars
+terraform plan
+terraform apply
 ```
 
 The Makefile wraps the same:
 
 ```bash
 make init
-make plan    TFVARS=terraform.staging.tfvars
-make apply   TFVARS=terraform.staging.tfvars
+make plan  ENV=staging
+make apply ENV=staging
 ```
 
 First apply creates the VPC, ALB, ECS cluster + 4 services, task/execution
@@ -225,7 +224,7 @@ route53_acm.tf elasticache.tf outputs.tf              # edge, cache, outputs
 cognito.tf messaging.tf s3.tf cloudfront.tf \         # AWS-native shared services
   ecr.tf secrets.tf
 modules/ecs-service/                                  # reusable Fargate service module
-terraform.staging.tfvars terraform.tfvars.example     # inputs
+environments/{staging,prod}/terraform.tfvars          # per-env inputs
 Makefile README.md
 ```
 

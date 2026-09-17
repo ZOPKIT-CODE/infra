@@ -2,29 +2,36 @@
 # Zopkit Suite — ECS Fargate stack Makefile
 #
 # Wraps the operator workflow:
-#   init / plan / apply    terraform lifecycle (workspace + tfvars aware)
+#   init / plan / apply    terraform lifecycle (per-environment directory)
 #   login-ecr              docker login to the account ECR registry
 #   build-<app> push-<app> build + push wrapper|crm|fa images to ECR
 #   deploy-<svc>           force a fresh ECS deployment for a service
 #   migrate-<app>          notes on operator-run DB migrations (does NOT auto-run)
 #
 # Override on the CLI, e.g.:
-#   make apply TFVARS=terraform.staging.tfvars WORKSPACE=staging
+#   make plan ENV=prod
 #   make push-wrapper TAG=$(git rev-parse --short HEAD)
 # =============================================================================
 
 # --- Tunables --------------------------------------------------------------
-TFVARS      ?= terraform.staging.tfvars
-WORKSPACE   ?= staging
+# ENV selects the environment DIRECTORY. There is no terraform workspace any
+# more and no -var-file: environments/<env>/terraform.tfvars auto-loads.
+ENV         ?= staging
+TF_DIR      := environments/$(ENV)
 AWS_REGION  ?= us-east-1
 TAG         ?= latest
+
+# Where the application repos are checked out, relative to this file. They are
+# siblings of this repo, not children of it — this Makefile used to live inside
+# the wrapper repo and its build contexts were relative to that.
+REPOS_ROOT  ?= ../../..
 
 # Account id + ECR registry host (resolved from your current AWS creds).
 ACCOUNT_ID  := $(shell aws sts get-caller-identity --query Account --output text 2>/dev/null)
 ECR_REGISTRY = $(ACCOUNT_ID).dkr.ecr.$(AWS_REGION).amazonaws.com
 
-# ECS cluster name is "${project}-${environment}". Default matches staging tfvars.
-CLUSTER     ?= zopkit-staging
+# ECS cluster name is "${project}-${environment}", so it follows ENV.
+CLUSTER     ?= zopkit-$(ENV)
 
 # App -> ECR repo mapping.
 #   wrapper -> wrapper-backend, crm -> crm-backend, fa -> fa-backend
@@ -41,24 +48,20 @@ help: ## Show this help
 
 # --- Terraform lifecycle ---------------------------------------------------
 .PHONY: init
-init: ## terraform init
-	terraform init
-
-.PHONY: workspace
-workspace: ## Select (or create) the target workspace
-	terraform workspace select $(WORKSPACE) 2>/dev/null || terraform workspace new $(WORKSPACE)
+init: ## terraform init for ENV (default staging)
+	terraform -chdir=$(TF_DIR) init
 
 .PHONY: plan
-plan: workspace ## terraform plan with the chosen tfvars
-	terraform plan -var-file=$(TFVARS)
+plan: ## terraform plan for ENV
+	terraform -chdir=$(TF_DIR) plan
 
 .PHONY: apply
-apply: workspace ## terraform apply with the chosen tfvars
-	terraform apply -var-file=$(TFVARS)
+apply: ## terraform apply for ENV
+	terraform -chdir=$(TF_DIR) apply
 
 .PHONY: destroy
-destroy: workspace ## terraform destroy (Supabase + ECR persist)
-	terraform destroy -var-file=$(TFVARS)
+destroy: ## terraform destroy for ENV (Supabase + ECR persist)
+	terraform -chdir=$(TF_DIR) destroy
 
 # --- ECR + images ----------------------------------------------------------
 .PHONY: login-ecr
@@ -69,11 +72,11 @@ login-ecr: ## docker login to the account ECR registry
 # build-<app>: build the image locally and tag it for ECR.
 .PHONY: build-wrapper build-crm build-fa
 build-wrapper: ## Build the wrapper-backend image
-	docker build --platform linux/amd64 -t $(ECR_REGISTRY)/$(REPO_wrapper):$(TAG) ../../../backend
+	docker build --platform linux/amd64 -t $(ECR_REGISTRY)/$(REPO_wrapper):$(TAG) $(REPOS_ROOT)/wrapper/backend
 build-crm: ## Build the crm-backend image (context: b2b-crm/server)
-	docker build --platform linux/amd64 -t $(ECR_REGISTRY)/$(REPO_crm):$(TAG) ../../../../b2b-crm/server
+	docker build --platform linux/amd64 -t $(ECR_REGISTRY)/$(REPO_crm):$(TAG) $(REPOS_ROOT)/b2b-crm/server
 build-fa: ## Build the fa-backend image (context: finance-accounting root)
-	docker build --platform linux/amd64 -t $(ECR_REGISTRY)/$(REPO_fa):$(TAG) ../../../../finance-accounting
+	docker build --platform linux/amd64 -t $(ECR_REGISTRY)/$(REPO_fa):$(TAG) $(REPOS_ROOT)/finance-accounting
 
 # push-<app>: push the tagged image to ECR (run login-ecr + build-<app> first).
 .PHONY: push-wrapper push-crm push-fa
