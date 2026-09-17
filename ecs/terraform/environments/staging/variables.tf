@@ -1,9 +1,3 @@
-# Input variables. Copy terraform.tfvars.example -> terraform.tfvars and edit.
-#
-# This ECS Fargate stack drops all EKS/Kubernetes variables (kubernetes_version,
-# node_*, cluster_*, enable_cluster_secret_store) and adds Fargate networking +
-# optional per-service override maps.
-
 variable "project" {
   description = "Project/name prefix for all resources."
   type        = string
@@ -66,7 +60,6 @@ variable "create_route53_zone" {
   default     = false
 }
 
-# --- Networking ---
 variable "vpc_cidr" {
   description = "VPC CIDR block."
   type        = string
@@ -85,14 +78,12 @@ variable "single_nat_gateway" {
   default     = false
 }
 
-# --- Fargate networking ---
 variable "fargate_assign_public_ip" {
   description = "Place Fargate tasks in PUBLIC subnets with a public IP and NO NAT gateway (cheapest — good for staging). Set false to run tasks in PRIVATE subnets behind NAT (prod-private)."
   type        = bool
   default     = true
 }
 
-# --- Per-service overrides (optional; empty = use the in-locals defaults) ---
 variable "service_desired_count_overrides" {
   description = "Override desired_count per ECS service (keyed by service name, e.g. wrapper-web). Empty map = use local.services defaults."
   type        = map(number)
@@ -111,34 +102,19 @@ variable "service_memory_overrides" {
   default     = {}
 }
 
-# Per-ENVIRONMENT service enablement. local.services carries one `enabled` flag
-# shared by every workspace, which breaks as soon as an app lives in one env but
-# not the other: prod demanded an SSM deployed-tag for lens-web (enabled=true
-# globally, never deployed to prod) and `terraform plan` failed outright on the
-# missing parameter. Set false here to make a service absent from THIS
-# environment without touching the global default.
 variable "service_enabled_overrides" {
   description = "Override the enabled flag per ECS service (keyed by service name, e.g. lens-web). Empty map = use local.services defaults."
   type        = map(bool)
   default     = {}
 }
 
-# Frontend SPA distributions (CloudFront + Route53 + bucket policy) that this
-# environment should NOT have. Same per-environment problem as above: an app can
-# have a frontend in prod and none in staging. Keys are local.frontends keys
-# (wrapper | crm | fa | lens).
 variable "disabled_frontends" {
   description = "Frontend keys to exclude in this environment. Empty = all frontends in local.frontends are created."
   type        = set(string)
   default     = []
 }
 
-# --- ElastiCache Valkey ---
 variable "valkey_node_type" {
-  # t4g.micro: the suite's auth/permission caches are tiny and low-traffic
-  # (~hundreds of ops/day, <1% CPU/mem observed on medium) — micro is ample
-  # headroom even for the full 6-app fleet. Downsized from t4g.medium 2026-06-10
-  # (~$119/mo saved across both envs).
   description = "ElastiCache (Valkey) node type."
   type        = string
   default     = "cache.t4g.micro"
@@ -150,32 +126,24 @@ variable "valkey_replicas" {
   default     = 1
 }
 
-# --- Cognito ---
 variable "cognito_domain_prefix" {
   description = "Cognito hosted-UI domain prefix (must be globally unique)."
   type        = string
   default     = "zopkit-platform"
 }
 
-# --- Container images (set by CI; placeholders until first push) ---
 variable "image_tag" {
   description = "Default container image tag deployed to every ECS service (overridden per-service by CI)."
   type        = string
   default     = "latest"
 }
 
-# Per-service image tag overrides, keyed by service name (wrapper-web, crm-web,
-# fa-web, fa-consumer). Any service not present falls back to var.image_tag.
-# This is what makes a true one-app-at-a-time rollout possible: bump only
-# `wrapper-web` to a new SHA and apply, without needing fresh images for the
-# others. deploy-service.sh sets this automatically.
 variable "service_image_tags" {
   description = "Per-service image tag overrides, keyed by ECS service name. Missing services fall back to var.image_tag."
   type        = map(string)
   default     = {}
 }
 
-# --- Operational ---
 variable "log_retention_days" {
   description = "CloudWatch log group retention."
   type        = number
@@ -194,7 +162,6 @@ variable "enable_ses_inbound" {
   default     = false
 }
 
-# --- Cognito: reuse an existing shared pool (Google federation already configured) ---
 variable "cognito_user_pool_id" {
   description = "Existing Cognito user pool id to reuse (e.g. the shared zopkit-platform pool). Empty = create+use this stack's own pool."
   type        = string
@@ -213,14 +180,12 @@ variable "cognito_client_ids" {
   default     = {}
 }
 
-# --- Staging convenience: skip trial/credit restrictions (like local dev) ---
 variable "bypass_trial_restrictions" {
   description = "When true, sets BYPASS_TRIAL_RESTRICTIONS=true so the credit/trial gate is skipped (staging/test). Keep false for prod."
   type        = bool
   default     = false
 }
 
-# --- Reuse an existing logo/blog-media S3 bucket (staging -> shared dev bucket) ---
 variable "logo_bucket_override" {
   description = "Existing S3 bucket for logos/blog media to use instead of this stack's created one (so images referenced by a shared DB resolve). Empty = use the created bucket."
   type        = string
@@ -233,7 +198,6 @@ variable "enable_valkey" {
   default     = true
 }
 
-# --- CI/CD OIDC (GitHub Actions) ---
 variable "github_deploy_repos" {
   description = "owner/repo allowed to assume the deploy role via OIDC."
   type        = list(string)
@@ -262,9 +226,6 @@ variable "enable_ci_oidc" {
   default     = true
 }
 
-# --- ECR ---
-# ECR repos are NOT env-prefixed (image names are shared across environments), so
-# exactly ONE workspace creates them; others reference them. Toggle with manage_ecr.
 variable "mutable_tag_repos" {
   description = "ECR repositories still publishing a moving tag, so they must stay MUTABLE. Remove an entry once its build emits git-SHA tags — see deploy/ecs/ONBOARDING.md."
   type        = set(string)
@@ -277,7 +238,6 @@ variable "manage_ecr" {
   default     = true
 }
 
-# --- RDS + bastion ---
 variable "enable_rds" {
   description = "Provision the RDS Postgres instance in this environment."
   type        = bool
@@ -327,17 +287,12 @@ variable "rds_skip_final_snapshot" {
   default     = true
 }
 
-# --- Mathesar (DB admin UI) ---
 variable "enable_mathesar" {
   description = "Deploy the Mathesar UI (staging only by default; keep OFF in prod — no public DB UI)."
   type        = bool
   default     = false
 }
 
-# SSO gate for the Mathesar URL. When the cognito vars are set, the ALB requires a
-# Cognito login (authenticate-cognito) BEFORE forwarding to Mathesar — so the UI
-# isn't reachable from the open internet, and it works on any network (no IP
-# allow-list, which CGNAT makes unreliable). Empty vars = no gate (forward only).
 variable "mathesar_cognito_user_pool_arn" {
   description = "Cognito user pool ARN for the Mathesar ALB SSO gate. Empty = no SSO."
   type        = string

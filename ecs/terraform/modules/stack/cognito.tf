@@ -1,15 +1,6 @@
-# cognito.tf — Cognito User Pool + hosted UI domain + per-app app clients.
-# Single suite-wide user pool; one app client per app (wrapper|crm|fa).
-# Pinned addresses (consumed by outputs.tf):
-#   aws_cognito_user_pool.this
-#   aws_cognito_user_pool_domain.this
-#   aws_cognito_user_pool_client.clients[<app>]  (apps with cognito_client = true)
-
-# User pool
 resource "aws_cognito_user_pool" "this" {
   name = "${local.name_prefix}-users"
 
-  # Sign in with email; auto-verify the email channel.
   username_attributes      = ["email"]
   auto_verified_attributes = ["email"]
 
@@ -21,7 +12,6 @@ resource "aws_cognito_user_pool" "this" {
     require_symbols   = true
   }
 
-  # Self-service account recovery via verified email only.
   account_recovery_setting {
     recovery_mechanism {
       name     = "verified_email"
@@ -29,13 +19,10 @@ resource "aws_cognito_user_pool" "this" {
     }
   }
 
-  # Allow self sign-up (admin-only creation disabled).
   admin_create_user_config {
     allow_admin_create_user_only = false
   }
 
-  # Custom attributes carrying suite identity claims into the JWT.
-  # Mutable so the app backends can backfill/update them post-provisioning.
   schema {
     name                     = "internalUserId"
     attribute_data_type      = "String"
@@ -77,23 +64,17 @@ resource "aws_cognito_user_pool" "this" {
   }
 }
 
-# Hosted UI domain (Cognito-managed prefix domain)
 resource "aws_cognito_user_pool_domain" "this" {
   domain       = "${var.cognito_domain_prefix}-${var.environment}"
   user_pool_id = aws_cognito_user_pool.this.id
 }
 
-# Per-app app clients (public clients — no secret; PKCE/SRP from SPAs+backends)
 resource "aws_cognito_user_pool_client" "clients" {
-  # Opt-in per app. An adopted app can bring its own IdP (academy uses Google
-  # OAuth + Supabase), and creating a pool client it never calls is dead config
-  # that still shows up in every plan and audit.
   for_each = { for k, v in local.apps : k => v if v.cognito_client }
 
   name         = "${each.key}-client"
   user_pool_id = aws_cognito_user_pool.this.id
 
-  # Public client: no generated secret (SRP/PKCE auth from browser + backend).
   generate_secret = false
 
   explicit_auth_flows = [
@@ -102,27 +83,20 @@ resource "aws_cognito_user_pool_client" "clients" {
     "ALLOW_USER_PASSWORD_AUTH",
   ]
 
-  # OAuth2 authorization-code flow via hosted UI.
   allowed_oauth_flows_user_pool_client = true
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["email", "openid", "profile"]
   supported_identity_providers         = ["COGNITO"]
 
-  # Backend-mediated OAuth: the app builds redirect_uri = ${BACKEND_URL}/api/auth/callback
-  # and exchanges the code server-side, so the callback MUST be the API host (behind the
-  # ALB), not the CloudFront SPA host. The frontend host is kept as an allowed return target.
   callback_urls = [
     "https://${local.fqdn[each.key].api}/api/auth/callback",
     "https://${local.fqdn[each.key].frontend}",
-    # SPA-side PKCE (CRM login + the cross-app silent-SSO prompt=none flow):
-    # the browser exchanges the code itself; redirect_uri must byte-match.
     "https://${local.fqdn[each.key].frontend}/login/callback",
   ]
   logout_urls = [
     "https://${local.fqdn[each.key].frontend}",
   ]
 
-  # Token lifetimes: short-lived access/id tokens, 30-day refresh.
   access_token_validity  = 60
   id_token_validity      = 60
   refresh_token_validity = 30
@@ -132,6 +106,5 @@ resource "aws_cognito_user_pool_client" "clients" {
     refresh_token = "days"
   }
 
-  # Don't leak whether a username exists on failed auth.
   prevent_user_existence_errors = "ENABLED"
 }

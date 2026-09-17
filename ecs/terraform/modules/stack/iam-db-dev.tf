@@ -1,21 +1,3 @@
-# iam-db-dev.tf — customer-managed IAM policies for DB-MCP / psql access to the
-# staging RDS via the SSM bastion. Attach to an Identity Center permission set,
-# an IAM group, or a user. No policy grants direct DB network access — the RDS SG
-# only allows the bastion + ECS tasks, so reaching the DB always goes through an
-# SSM port-forward (IAM-gated, CloudTrail-audited).
-#
-# Two shapes, keyed off the existing app fleet (local.apps = wrapper|crm|fa, kept
-# in sync with deploy/ecs/db-apps.sh):
-#   * Per-app DEVELOPER policy  ("${name_prefix}-db-dev-<app>") — full (migrator)
-#     access to exactly ONE app's database. Attach a dev only to their app.
-#   * ADMIN policy              ("${name_prefix}-db-admin")      — full access to
-#     ALL apps' databases at once (the 6-app simultaneous case).
-#
-# "Full access" = the app's `-roles` secret (which carries the migrator URL) plus
-# the `-viewer` secret (so the same person can also open a read-only MCP).
-
-# Statements every DB user needs regardless of which app(s): the SSM tunnel to the
-# (only) bastion + the describe calls the tunnel helper makes. Reused below.
 locals {
   db_tunnel_statements = [
     {
@@ -25,7 +7,6 @@ locals {
       Resource = "*"
     },
     {
-      # Port-forward session ONLY to the tagged bastion (not arbitrary instances).
       Sid      = "StartSessionToBastion"
       Effect   = "Allow"
       Action   = "ssm:StartSession"
@@ -48,7 +29,6 @@ locals {
     },
   ]
 
-  # Both role secrets for one app: -roles (migrator) + -viewer (read-only).
   db_app_secret_arns = {
     for app in keys(local.apps) : app => [
       "arn:aws:secretsmanager:${var.aws_region}:${local.account_id}:secret:zopkit/${var.environment}/rds-${app}-roles-*",
@@ -57,7 +37,6 @@ locals {
   }
 }
 
-# Per-app DEVELOPER policy: full access to exactly one app's DB.
 resource "aws_iam_policy" "db_dev_app" {
   for_each    = var.enable_rds ? local.apps : {}
   name        = "${local.name_prefix}-db-dev-${each.key}"
@@ -76,7 +55,6 @@ resource "aws_iam_policy" "db_dev_app" {
   tags = local.common_tags
 }
 
-# ADMIN policy: full access to EVERY app's DB at once (the 6-simultaneous case).
 resource "aws_iam_policy" "db_admin" {
   count       = var.enable_rds ? 1 : 0
   name        = "${local.name_prefix}-db-admin"

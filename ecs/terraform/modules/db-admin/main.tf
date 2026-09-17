@@ -1,14 +1,3 @@
-# db-admin.tf — a one-off, in-VPC psql task for provisioning per-app databases +
-# roles on the RDS instance WITHOUT exposing it publicly. Run it with:
-#
-#   aws ecs run-task --cluster zopkit-staging-ecs --task-definition zopkit-staging-db-admin \
-#     --launch-type FARGATE --network-configuration '<public-subnet + tasks SG + assignPublicIp>' \
-#     --overrides '{"containerOverrides":[{"name":"db-admin","environment":[{"name":"DB_ADMIN_SQL","value":"CREATE DATABASE ...; CREATE ROLE ...;"}]}]}'
-#
-# DB_ADMIN_URL (the RDS master connection) is injected from Secrets Manager; the
-# per-run SQL is passed as the DB_ADMIN_SQL env override. psql runs in autocommit
-# so multi-statement scripts incl. CREATE DATABASE work.
-
 resource "aws_cloudwatch_log_group" "db_admin" {
   count             = var.enabled ? 1 : 0
   name              = "/ecs/${var.name_prefix}/db-admin"
@@ -26,10 +15,9 @@ resource "aws_ecs_task_definition" "db_admin" {
   execution_role_arn       = var.execution_role_arn
 
   container_definitions = jsonencode([{
-    name      = "db-admin"
-    image     = "postgres:15-alpine"
-    essential = true
-    # SQL comes from the DB_ADMIN_SQL env override at run time; URL from the secret.
+    name        = "db-admin"
+    image       = "postgres:15-alpine"
+    essential   = true
     command     = ["sh", "-lc", "printf '%s' \"$DB_ADMIN_SQL\" | psql \"$DB_ADMIN_URL\" -v ON_ERROR_STOP=1"]
     secrets     = [{ name = "DB_ADMIN_URL", valueFrom = "${var.rds_master_secret_arn}:url::" }]
     environment = [{ name = "DB_ADMIN_SQL", value = "SELECT 'override DB_ADMIN_SQL at run time';" }]

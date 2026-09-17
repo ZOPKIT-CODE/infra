@@ -30,11 +30,6 @@ module "mathesar" {
   tags = local.common_tags
 }
 
-#
-# The two random_password resources are the dangerous ones — without a moved
-# block Terraform would generate NEW values, silently rotating Mathesar's DB
-# password and Django secret key away from what the running service holds.
-# Re-exported so the root output surface is unchanged by the move.
 output "mathesar_url" {
   description = "Mathesar UI URL. Null when the service is disabled."
   value       = module.mathesar.mathesar_url

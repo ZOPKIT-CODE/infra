@@ -1,5 +1,3 @@
-# Re-exported from the stack module so `terraform output` is unchanged.
-
 output "acm_cert_arn" {
   value = module.stack.acm_cert_arn
 }

@@ -1,11 +1,7 @@
-# Outputs for the ECS Fargate stack: the ECS cluster, shared ALB, registry, messaging,
-# cache, Cognito, storage/CDN, secrets, and the per-service ECS handles.
-
 output "region" {
   value = var.aws_region
 }
 
-# --- ECS compute ---
 output "cluster_name" {
   value = aws_ecs_cluster.this.name
 }
@@ -24,7 +20,6 @@ output "target_group_arns" {
   value       = { for k, m in module.services : k => m.target_group_arn }
 }
 
-# --- Load balancer ---
 output "alb_dns_name" {
   value = aws_lb.this.dns_name
 }
@@ -33,13 +28,11 @@ output "alb_zone_id" {
   value = aws_lb.this.zone_id
 }
 
-# --- Container registry ---
 output "ecr_repository_urls" {
   description = "ECR repo URLs keyed by repo name."
   value       = local.ecr_repo_urls
 }
 
-# --- Messaging ---
 output "sns_topic_arns" {
   value = module.messaging.topic_arns
 }
@@ -52,7 +45,6 @@ output "sqs_dlq_urls" {
   value = module.messaging.dlq_urls
 }
 
-# --- Cache ---
 output "valkey_primary_endpoint" {
   value = var.enable_valkey ? aws_elasticache_replication_group.valkey[0].primary_endpoint_address : null
 }
@@ -62,13 +54,11 @@ output "valkey_secret_arn" {
   value       = var.enable_valkey ? aws_secretsmanager_secret.valkey[0].arn : null
 }
 
-# --- TLS ---
 output "acm_cert_arn" {
   description = "Primary-region wildcard ACM cert ARN for the shared ALB."
   value       = local.acm_cert_arn
 }
 
-# --- Cognito ---
 output "cognito_user_pool_id" {
   value = aws_cognito_user_pool.this.id
 }
@@ -85,7 +75,6 @@ output "cognito_issuer_url" {
   value = "https://cognito-idp.${var.aws_region}.amazonaws.com/${aws_cognito_user_pool.this.id}"
 }
 
-# --- Storage / CDN ---
 output "s3_bucket_names" {
   value = { for k, b in aws_s3_bucket.buckets : k => b.id }
 }
@@ -95,7 +84,6 @@ output "cloudfront_domains" {
   value       = { for k, d in aws_cloudfront_distribution.frontends : k => d.domain_name }
 }
 
-# --- Secrets (containers; values filled out-of-band) ---
 output "app_secret_arns" {
   value = { for k, s in aws_secretsmanager_secret.app : k => s.arn }
 }

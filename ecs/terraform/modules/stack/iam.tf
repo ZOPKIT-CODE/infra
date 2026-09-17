@@ -1,18 +1,3 @@
-# iam.tf — ECS task roles + ONE shared execution role. No OIDC/IRSA: ECS hands
-# each task its role directly.
-#
-#   (A) ecs-tasks.amazonaws.com assume-role trust (shared by all task roles).
-#   (B) 3 per-app TASK roles (wrapper / crm / fa) carrying the least-privilege
-#       runtime policies — least privilege per app. fa-web AND fa-consumer share
-#       the single "fa" task role.
-#   (C) 1 shared EXECUTION role: AmazonECSTaskExecutionRolePolicy (ECR pull +
-#       CloudWatch logs) plus an inline secretsmanager:GetSecretValue grant on
-#       the app + valkey secrets so the agent can resolve the task def `secrets`
-#       valueFrom ARNs at launch.
-
-# =============================================================================
-# (A) Task-role trust — principal is the ECS tasks service, NOT an OIDC IdP.
-# =============================================================================
 data "aws_iam_policy_document" "ecs_tasks_assume" {
   statement {
     effect  = "Allow"
@@ -24,11 +9,8 @@ data "aws_iam_policy_document" "ecs_tasks_assume" {
   }
 }
 
-# =============================================================================
-# (B) Per-app task roles (wrapper / crm / fa). fa-web + fa-consumer share "fa".
-# =============================================================================
 resource "aws_iam_role" "task" {
-  for_each = local.apps # wrapper | crm | fa
+  for_each = local.apps
 
   name               = "${local.name_prefix}-task-${each.key}"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
@@ -38,12 +20,7 @@ resource "aws_iam_role" "task" {
   }
 }
 
-# ---------- wrapper ----------------------------------------------------------
-# Publishes SNS (both inter-app topics), consumes its own SQS queues + the three
-# notification queues, owns the claim-check + logos S3 buckets, drives Cognito
-# admin APIs, and reads its own + the Valkey secret.
 data "aws_iam_policy_document" "wrapper" {
-  # SNS publish on both inter-app topics.
   statement {
     sid       = "SnsPublish"
     effect    = "Allow"
@@ -51,7 +28,6 @@ data "aws_iam_policy_document" "wrapper" {
     resources = [for k in ["inter_app_events", "inter_app_broadcast"] : module.messaging.topic_arns[k]]
   }
 
-  # SQS consume + send on wrapper_events + the three notification queues.
   statement {
     sid    = "SqsConsume"
     effect = "Allow"
@@ -68,7 +44,6 @@ data "aws_iam_policy_document" "wrapper" {
     ]
   }
 
-  # Send to the matching DLQs (manual redrive / poison-message handling).
   statement {
     sid     = "SqsDlqSend"
     effect  = "Allow"
@@ -79,7 +54,6 @@ data "aws_iam_policy_document" "wrapper" {
     ]
   }
 
-  # S3 read/write on the claim-check + wrapper logos buckets.
   statement {
     sid    = "S3Buckets"
     effect = "Allow"
@@ -92,13 +66,10 @@ data "aws_iam_policy_document" "wrapper" {
     resources = concat(
       [for k in ["claim_check", "wrapper_logos"] : aws_s3_bucket.buckets[k].arn],
       [for k in ["claim_check", "wrapper_logos"] : "${aws_s3_bucket.buckets[k].arn}/*"],
-      # When reusing an existing logo bucket (staging points at the shared dev
-      # bucket so blog/logo images referenced by the shared dev DB resolve).
       var.logo_bucket_override != "" ? ["arn:aws:s3:::${var.logo_bucket_override}", "arn:aws:s3:::${var.logo_bucket_override}/*"] : [],
     )
   }
 
-  # Cognito admin APIs scoped to the suite user pool.
   statement {
     sid    = "CognitoAdmin"
     effect = "Allow"
@@ -122,7 +93,6 @@ data "aws_iam_policy_document" "wrapper" {
     resources = [aws_cognito_user_pool.this.arn]
   }
 
-  # Secrets Manager read on the app secret + the shared Valkey secret.
   statement {
     sid     = "SecretsRead"
     effect  = "Allow"
@@ -140,12 +110,7 @@ resource "aws_iam_role_policy" "wrapper" {
   policy = data.aws_iam_policy_document.wrapper.json
 }
 
-# ---------- crm --------------------------------------------------------------
-# Consumes crm_events + business_events_crm, publishes to the business-events
-# SNS topic, sends email via SES, owns crm_attachments (RW) + reads claim
-# checks, reads its own + Valkey secrets.
 data "aws_iam_policy_document" "crm" {
-  # SQS consume + send on crm_events + business_events_crm.
   statement {
     sid    = "SqsConsume"
     effect = "Allow"
@@ -170,7 +135,6 @@ data "aws_iam_policy_document" "crm" {
     ]
   }
 
-  # Publish onto the business-events SNS topic.
   statement {
     sid       = "BusinessEventsPublish"
     effect    = "Allow"
@@ -178,8 +142,6 @@ data "aws_iam_policy_document" "crm" {
     resources = [module.messaging.topic_arns["business_events"]]
   }
 
-  # SES send. SES email-sending authorization is identity/configuration-set
-  # scoped rather than ARN scoped, so the resource is "*".
   statement {
     sid       = "SesSend"
     effect    = "Allow"
@@ -187,7 +149,6 @@ data "aws_iam_policy_document" "crm" {
     resources = ["*"]
   }
 
-  # S3: read/write crm_attachments, read-only claim_check.
   statement {
     sid    = "S3Attachments"
     effect = "Allow"
@@ -233,11 +194,6 @@ resource "aws_iam_role_policy" "crm" {
   policy = data.aws_iam_policy_document.crm.json
 }
 
-# ---------- fa ---------------------------------------------------------------
-# Publishes to the business-events SNS topic (via fa_outbox), consumes
-# accounting_events + business_events_fa in a separate consumer process, owns
-# fa_receipts (RW) + reads claim checks, reads its own + Valkey secrets.
-# This single role backs BOTH the fa-web and fa-consumer ECS services.
 data "aws_iam_policy_document" "fa" {
   statement {
     sid       = "BusinessEventsPublish"
@@ -270,7 +226,6 @@ data "aws_iam_policy_document" "fa" {
     ]
   }
 
-  # S3: read/write fa_receipts, read-only claim_check.
   statement {
     sid    = "S3Receipts"
     effect = "Allow"
@@ -316,11 +271,6 @@ resource "aws_iam_role_policy" "fa" {
   policy = data.aws_iam_policy_document.fa.json
 }
 
-# ---------- lens ---------------------------------------------------------
-# zopkit-lens is a standalone app (own Kinde auth, own Stripe/Razorpay, no
-# platform SNS/SQS bus, no shared S3 buckets). Least-privilege runtime grant
-# is just read access to its own app secret — no Valkey (lens doesn't use
-# Redis) and no Cognito (lens uses Kinde, not the suite's Cognito pool).
 data "aws_iam_policy_document" "lens" {
   statement {
     sid     = "SecretsRead"
@@ -338,9 +288,6 @@ resource "aws_iam_role_policy" "lens" {
   policy = data.aws_iam_policy_document.lens.json
 }
 
-# =============================================================================
-# (C) Shared task EXECUTION role.
-# =============================================================================
 resource "aws_iam_role" "execution" {
   name               = "${local.name_prefix}-task-execution"
   assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
@@ -350,15 +297,11 @@ resource "aws_iam_role" "execution" {
   }
 }
 
-# Managed policy covers ECR pull (GetAuthorizationToken / BatchGetImage /
-# GetDownloadUrlForLayer) + CloudWatch logs (CreateLogStream / PutLogEvents).
 resource "aws_iam_role_policy_attachment" "execution_managed" {
   role       = aws_iam_role.execution.name
   policy_arn = "arn:${local.partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
 }
 
-# Inline grant so the ECS agent can resolve the task def `secrets` valueFrom
-# ARNs (app secrets + the valkey secret) at task launch.
 data "aws_iam_policy_document" "execution_secrets" {
   statement {
     sid     = "GetTaskSecrets"
@@ -367,7 +310,6 @@ data "aws_iam_policy_document" "execution_secrets" {
     resources = concat(
       [for k in keys(local.apps) : aws_secretsmanager_secret.app[k].arn],
       var.enable_valkey ? [aws_secretsmanager_secret.valkey[0].arn] : [],
-      # RDS rollout: master (db-admin provisioning task); mathesar secret only when deployed.
       var.enable_rds ? [aws_secretsmanager_secret.rds_master[0].arn] : [],
       compact([module.mathesar.secret_arn]),
     )

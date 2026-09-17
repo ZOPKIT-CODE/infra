@@ -1,17 +1,3 @@
-###############################################################################
-# modules/ecs-service — resources
-#
-# Creates, for one ECS service:
-#   * a Fargate/awsvpc task definition (single container)
-#   * (web only) an ip-target-type target group + a host-header listener rule
-#   * the ECS service (with optional load_balancer block)
-#   * (autoscaled only) an appautoscaling target + CPU target-tracking policy
-#
-# The CloudWatch log group is owned by the root stack (observability.tf) and
-# passed in via var.log_group_name; this module does NOT create it.
-###############################################################################
-
-# 1. Task definition
 resource "aws_ecs_task_definition" "this" {
   family                   = "${var.name_prefix}-${var.name}"
   requires_compatibilities = ["FARGATE"]
@@ -52,16 +38,9 @@ resource "aws_ecs_task_definition" "this" {
   tags = var.tags
 }
 
-# 2. Target group (web services only)
 resource "aws_lb_target_group" "this" {
   count = var.needs_alb ? 1 : 0
 
-  # Default is the generated name, truncated to the ALB's 32-char limit (which is
-  # how zopkit-staging-entertainment-erp-web lands on ...-entertainment-erp).
-  # target_group_name overrides it so a service created out-of-band under a
-  # different name can be ADOPTED by import instead of forcing a replacement —
-  # a replacement swings live traffic to a new group. See academy-web, whose
-  # pre-existing group is ...-academy-tg rather than ...-academy-web.
   name                 = coalesce(var.target_group_name, substr("${var.name_prefix}-${var.name}", 0, 32))
   target_type          = "ip"
   protocol             = "HTTP"
@@ -91,7 +70,6 @@ resource "aws_lb_target_group" "this" {
   tags = var.tags
 }
 
-# 3. Listener rule (web services only)
 resource "aws_lb_listener_rule" "this" {
   count = var.needs_alb ? 1 : 0
 
@@ -112,12 +90,6 @@ resource "aws_lb_listener_rule" "this" {
   tags = var.tags
 }
 
-# 4. ECS service
-#
-# ignore_changes = [desired_count] is set unconditionally: it is safe for
-# pinned services (Terraform still sets the initial count on create) and
-# required for autoscaled services (so the appautoscaling-driven count is not
-# reverted on every apply).
 resource "aws_ecs_service" "this" {
   name            = "${var.name_prefix}-${var.name}"
   cluster         = var.cluster_arn
@@ -151,7 +123,6 @@ resource "aws_ecs_service" "this" {
   tags = var.tags
 }
 
-# 5. Autoscaling target (autoscaled services only)
 resource "aws_appautoscaling_target" "this" {
   count = var.autoscaling_enabled ? 1 : 0
 
@@ -162,7 +133,6 @@ resource "aws_appautoscaling_target" "this" {
   service_namespace  = "ecs"
 }
 
-# 6. Autoscaling policy — CPU target tracking (autoscaled services only)
 resource "aws_appautoscaling_policy" "cpu" {
   count = var.autoscaling_enabled ? 1 : 0
 

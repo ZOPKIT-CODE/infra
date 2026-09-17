@@ -1,7 +1,3 @@
-# Mathesar — a browser DB admin UI for the RDS instance, fronted by the shared
-# ALB. Everything here is gated on `enabled`; the root combines enable_mathesar
-# with enable_rds, since there is nothing to administer without a database.
-
 variable "name_prefix" {
   description = "Resource name prefix, \"<project>-<environment>\"."
   type        = string
@@ -33,8 +29,6 @@ variable "route53_zone_id" {
   type        = string
 }
 
-# --- Networking -------------------------------------------------------------
-
 variable "vpc_id" {
   description = "VPC for the target group."
   type        = string
@@ -54,8 +48,6 @@ variable "fargate_assign_public_ip" {
   description = "Place the task in public subnets with a public IP (NAT-less) rather than private subnets."
   type        = bool
 }
-
-# --- Shared platform --------------------------------------------------------
 
 variable "cluster_id" {
   description = "ECS cluster to run the service on."
@@ -96,8 +88,6 @@ variable "db_address" {
   description = "RDS instance address (hostname, no port)."
   type        = string
 }
-
-# --- Optional Cognito ALB auth ----------------------------------------------
 
 variable "mathesar_cognito_user_pool_arn" {
   description = "Cognito pool ARN for ALB authenticate-cognito. Empty disables ALB auth."

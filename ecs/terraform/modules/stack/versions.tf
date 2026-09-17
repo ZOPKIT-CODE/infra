@@ -1,9 +1,3 @@
-# Provider + version constraints for the shared suite stack.
-#
-# This module is instantiated once per environment from ../../environments/<env>.
-# It declares NO provider configuration and NO backend — both belong to the root
-# module — but it does declare the aliases it expects to be handed, so a root
-# that forgets to pass them fails at init rather than at apply.
 terraform {
   required_version = ">= 1.6.0"
 

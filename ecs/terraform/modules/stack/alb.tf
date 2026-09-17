@@ -1,19 +1,3 @@
-# alb.tf — Shared internet-facing Application Load Balancer + its security
-# group + HTTPS:443 / HTTP:80 listeners.
-#
-# There is ONE ALB for the whole suite. Each web service (wrapper-web,
-# crm-web, fa-web) creates its own target group + host-header listener rule
-# INSIDE modules/ecs-service (needs_alb = true). This file owns:
-#   - the ALB security group (443/80 from the Internet)
-#   - the load balancer itself (public subnets)
-#   - the HTTPS:443 listener (ACM wildcard cert, default fixed-response 404)
-#   - the HTTP:80 listener (301 -> HTTPS)
-#   - the wrapper tenant-wildcard listener rule (*.<root> -> wrapper TG)
-#
-# The HTTPS listener ARN (aws_lb_listener.https.arn) is passed into each web
-# service module as alb_listener_arn so it can attach its host-header rule.
-
-# ALB security group: 443 + 80 from anywhere, egress all (to reach task ENIs).
 resource "aws_security_group" "alb" {
   name        = "${local.name_prefix}-alb"
   description = "Shared ALB - HTTPS/HTTP from the Internet, egress to ECS tasks"
@@ -48,7 +32,6 @@ resource "aws_security_group" "alb" {
   }
 }
 
-# The load balancer. Internet-facing, application type, in the public subnets.
 resource "aws_lb" "this" {
   name               = substr("${local.name_prefix}-alb", 0, 32)
   internal           = false
@@ -61,9 +44,6 @@ resource "aws_lb" "this" {
   }
 }
 
-# HTTPS:443 listener. Terminates TLS with the primary-region wildcard ACM cert
-# (local.acm_cert_arn). Default action is a 404 fixed response; host-header
-# rules created by each web service module forward to that service's TG.
 resource "aws_lb_listener" "https" {
   load_balancer_arn = aws_lb.this.arn
   port              = 443
@@ -86,7 +66,6 @@ resource "aws_lb_listener" "https" {
   }
 }
 
-# HTTP:80 listener. 301-redirects every request to HTTPS:443.
 resource "aws_lb_listener" "http" {
   load_balancer_arn = aws_lb.this.arn
   port              = 80
@@ -107,16 +86,6 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# Wrapper tenant-vanity wildcard rule. The wrapper service must serve both
-# api.<root> (its own module-created rule at priority 10) AND *.<root> tenant
-# hosts. Rather than widen the module's host_header condition, attach a
-# dedicated catch-all rule here forwarding *.<root> to wrapper's
-# target group. (`aws_route53_record.tenant_wildcard` aliases *.<root> -> ALB.)
-#
-# PRIORITY MUST SIT AFTER EVERY APP RULE (wrapper 10 / crm 20 / fa 30): at its
-# old value (11) the wildcard swallowed crm-api.<root>/accounting-api.<root>
-# before their host rules could match — every CRM API call was answered by
-# WRAPPER (broken CORS, wrong app) while crm-web sat healthy and unreachable.
 resource "aws_lb_listener_rule" "tenant_wildcard" {
   listener_arn = aws_lb_listener.https.arn
   priority     = 90

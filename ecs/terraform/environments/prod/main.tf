@@ -1,7 +1,3 @@
-# The whole suite stack, instantiated for prod.
-#
-# Every environment-specific value comes from this directory's terraform.tfvars;
-# the stack module itself is identical across environments.
 module "stack" {
   source = "../../modules/stack"
 
@@ -60,17 +56,6 @@ module "stack" {
   vpc_cidr                        = var.vpc_cidr
 }
 
-# ---------------------------------------------------------------------------
-# Address migration: this directory adopts the state that the root module used
-# to own, so every address gains a `module.stack.` prefix. Without these blocks
-# Terraform reads all 65 resources as new and plans destroy+create.
-#
-# A single `moved` on a module address carries every resource inside it, which
-# is why the 8 module entries cover far more than 8 resources.
-#
-# Keep these indefinitely — they are cheap, and they are the only record of how
-# the pre-prod-directory state maps onto the current layout.
-# ---------------------------------------------------------------------------
 moved {
   from = module.bastion
   to   = module.stack.module.bastion
@@ -436,15 +421,6 @@ moved {
   to   = module.stack.random_password.valkey
 }
 
-# ---------------------------------------------------------------------------
-# Second-generation moves: the six modules extracted from the flat root
-# (observability, messaging, ci-oidc, bastion, db-admin, mathesar).
-#
-# These MUST live here, not inside modules/stack. A `moved` block resolves its
-# addresses relative to the module that declares it, so the same block inside
-# the stack would read `from` as module.stack.<addr> — an address state has
-# never held — and every one of these resources would be planned for destroy.
-# ---------------------------------------------------------------------------
 moved {
   from = aws_iam_role.bastion
   to   = module.stack.module.bastion.aws_iam_role.bastion

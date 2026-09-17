@@ -1,7 +1,3 @@
-# GitHub Actions → AWS via OIDC (no long-lived keys). Creates the GitHub OIDC
-# provider + a single deploy role the app repos assume to build/push images and
-# run `terraform apply -target` + ECS deploys. Trust is scoped to the listed repos.
-
 resource "aws_iam_openid_connect_provider" "github" {
   count           = var.enable_ci_oidc ? 1 : 0
   url             = "https://token.actions.githubusercontent.com"
@@ -24,11 +20,6 @@ data "aws_iam_policy_document" "github_deploy_trust" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
-    # Match both the standard subject format (personal-account repos, e.g. ursrudra/zopkit-lens)
-    # and the ZOPKIT-CODE org's custom OIDC subject-claim template, which embeds numeric
-    # owner/repo IDs: "repo:ZOPKIT-CODE@<owner_id>/<repo>@<repo_id>:ref:...". Discovered via a
-    # temporary token-decode debug step after AssumeRoleWithWebIdentity kept failing for a newly
-    # trusted org repo - the plain "repo:${r}:*" pattern never matches the ID-suffixed form.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
@@ -49,9 +40,6 @@ resource "aws_iam_role" "github_deploy" {
   tags               = var.tags
 }
 
-# Deploy permissions: build/push images, run terraform apply -target (ECS service
-# + task def + autoscaling + ALB target group/rule), run the migration task,
-# deploy the frontend (S3 + CloudFront), and the read access terraform refresh needs.
 data "aws_iam_policy_document" "github_deploy" {
   statement {
     sid       = "EcrPushPull"
@@ -84,13 +72,9 @@ data "aws_iam_policy_document" "github_deploy" {
     resources = ["arn:aws:s3:::zopkit-tfstate-${var.account_id}", "arn:aws:s3:::zopkit-tfstate-${var.account_id}/*"]
   }
   statement {
-    sid     = "FrontendAndMediaBuckets"
-    effect  = "Allow"
-    actions = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
-    # zopkit-prod-wrapper-fe is explicit (not just ${var.name_prefix}-*): the
-    # live app.zopkit.com CloudFront distribution (EN60I8X0N59OO) reads from
-    # this prod-named bucket even though this role is applied under the
-    # staging tfvars — deploy.yml's wrapper-web frontend job writes here.
+    sid       = "FrontendAndMediaBuckets"
+    effect    = "Allow"
+    actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
     resources = ["arn:aws:s3:::${var.name_prefix}-*", "arn:aws:s3:::${var.name_prefix}-*/*", "arn:aws:s3:::wrapper-tenant-logos", "arn:aws:s3:::wrapper-tenant-logos/*", "arn:aws:s3:::zopkit-prod-wrapper-fe", "arn:aws:s3:::zopkit-prod-wrapper-fe/*"]
   }
   statement {
@@ -105,7 +89,6 @@ data "aws_iam_policy_document" "github_deploy" {
     actions   = ["ssm:GetParameter", "ssm:PutParameter"]
     resources = ["arn:aws:ssm:${var.aws_region}:${var.account_id}:parameter/${var.project}/*/deployed-tag/*"]
   }
-  # Read-only access terraform's refresh needs across the rest of the stack.
   statement {
     sid    = "RefreshReadOnly"
     effect = "Allow"
@@ -114,9 +97,6 @@ data "aws_iam_policy_document" "github_deploy" {
       "sns:Get*", "sns:List*", "sqs:Get*", "sqs:List*", "route53:Get*", "route53:List*",
       "cognito-idp:Describe*", "cognito-idp:Get*", "cognito-idp:List*", "elasticache:Describe*", "elasticache:List*",
       "acm:Describe*", "acm:List*", "secretsmanager:DescribeSecret", "secretsmanager:GetResourcePolicy", "secretsmanager:ListSecret*",
-      # S3 read-only: terraform refresh reads ~12 per-bucket sub-configs (accelerate, cors,
-      # website, logging, acl, object-lock, public-access-block, tagging, …) whose IAM action
-      # names are NOT all under s3:GetBucket* — grant the read verbs broadly to avoid whack-a-mole.
       "s3:Get*", "s3:List*",
     ]
     resources = ["*"]
@@ -130,15 +110,6 @@ resource "aws_iam_role_policy" "github_deploy" {
   policy = data.aws_iam_policy_document.github_deploy.json
 }
 
-# Infra-apply role — for the FULL `terraform apply` workflow (infra-apply.yml).
-#
-# The everyday deploy role above is least-privilege (ECS/ALB/frontend only) and
-# its targeted apply never touches iam.tf/buckets/sns/etc. Full-stack changes
-# (task-role grants, new buckets, ALB rules, Cognito, Valkey…) need broad infra
-# perms, so they get a SEPARATE role assumable ONLY from the gated GitHub
-# `infra-staging` / `infra-prod` environments (add required reviewers to those
-# environments in repo settings — especially infra-prod). Created once (in the
-# enable_ci_oidc=true workspace); referenced by both env workflows.
 data "aws_iam_policy_document" "infra_apply_trust" {
   count = var.enable_ci_oidc ? 1 : 0
   statement {
@@ -153,16 +124,6 @@ data "aws_iam_policy_document" "infra_apply_trust" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
-    # Assumable ONLY from a job pinned to the infra-* GitHub environments, so the
-    # environment's protection rules (required reviewers) gate every infra apply.
-    #
-    # BOTH repos are trusted during the IaC migration: infra-apply.yml still runs
-    # from ZOPKIT-CODE/Wrapper today and moves to ZOPKIT-CODE/infra once this
-    # policy is applied. Drop the Wrapper entries after the workflow has moved.
-    #
-    # The @*/…@* forms match the org's custom OIDC subject-claim template, which
-    # embeds numeric owner/repo IDs — see github_deploy_trust above. The plain
-    # form alone does NOT match for org repos using that template.
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
@@ -179,7 +140,6 @@ data "aws_iam_policy_document" "infra_apply_trust" {
 data "aws_iam_policy_document" "infra_apply" {
   count = var.enable_ci_oidc ? 1 : 0
 
-  # Service-bounded management of everything the stack provisions.
   statement {
     sid    = "InfraServices"
     effect = "Allow"
@@ -191,8 +151,6 @@ data "aws_iam_policy_document" "infra_apply" {
     ]
     resources = ["*"]
   }
-  # IAM is escalation-sensitive: scope writes to project-named principals + the
-  # OIDC provider. Reads are broad (terraform refresh + plan need them).
   statement {
     sid       = "IamProjectScoped"
     effect    = "Allow"
@@ -226,4 +184,3 @@ resource "aws_iam_role_policy" "infra_apply" {
   role   = aws_iam_role.infra_apply[0].id
   policy = data.aws_iam_policy_document.infra_apply[0].json
 }
-

@@ -8,4 +8,3 @@ module "db_admin" {
   rds_master_secret_arn = one(aws_secretsmanager_secret.rds_master[*].arn)
   tags                  = local.common_tags
 }
-

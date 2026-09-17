@@ -1,21 +1,9 @@
-# rds.tf — RDS PostgreSQL for the suite (one instance hosting per-app databases).
-#
-# Gated by var.enable_rds so it only provisions where opted in (staging first).
-# Staging posture: publicly_accessible = true but SG-locked to the ECS tasks SG +
-# an admin allow-list CIDR, so devs/seeding can reach it. PROD should flip
-# publicly_accessible=false and live in private subnets (see comments).
-#
-# One instance hosts all app databases (wrapper_<env>, crm_<env>, …); each app
-# gets its own database + least-privilege roles, created out-of-band after apply.
-
-# Master/superuser password — used only to create per-app databases + roles.
 resource "random_password" "rds_master" {
   count   = var.enable_rds ? 1 : 0
   length  = 40
   special = false
 }
 
-# Security group: 5432 from the ECS tasks SG (apps) + admin CIDRs (seeding/GUI).
 resource "aws_security_group" "rds" {
   count       = var.enable_rds ? 1 : 0
   name        = "${local.name_prefix}-rds"
@@ -30,11 +18,6 @@ resource "aws_security_group" "rds" {
     security_groups = [aws_security_group.tasks.id]
   }
 
-  # INLINE (not a separate aws_security_group_rule): this SG uses inline ingress
-  # blocks, and Terraform treats the inline set as COMPLETE — any rule managed as
-  # a separate resource is stripped by the next apply that touches this SG. That
-  # is exactly how the bastion rule silently vanished before (breaking every dev
-  # tunnel/MCP). Keep ALL ingress for this SG inline.
   dynamic "ingress" {
     for_each = var.enable_bastion ? [1] : []
     content {
@@ -68,8 +51,6 @@ resource "aws_security_group" "rds" {
   tags = { Name = "${local.name_prefix}-rds" }
 }
 
-# Subnet group: public subnets when publicly_accessible (needs IGW route),
-# else the VPC's intra/private subnets (prod).
 resource "aws_db_subnet_group" "this" {
   count      = var.enable_rds ? 1 : 0
   name       = "${local.name_prefix}-db"
@@ -85,14 +66,11 @@ resource "aws_db_instance" "this" {
   engine_version = "15.8"
   instance_class = var.rds_instance_class
 
-  # Storage: 20GB gp3, autoscaling to 100GB, encrypted at rest.
   allocated_storage     = 20
   max_allocated_storage = 100
   storage_type          = "gp3"
   storage_encrypted     = true
 
-  # Master user — used only for provisioning per-app DBs/roles. App + migrator +
-  # viewer roles (least-privilege) are created out-of-band.
   username = "dbadmin"
   password = random_password.rds_master[0].result
   port     = 5432
@@ -101,12 +79,10 @@ resource "aws_db_instance" "this" {
   vpc_security_group_ids = [aws_security_group.rds[0].id]
   publicly_accessible    = var.rds_publicly_accessible
 
-  # Backups: 7-day automated + PITR. (Supabase free tier has none.)
   backup_retention_period      = 7
   copy_tags_to_snapshot        = true
   performance_insights_enabled = true
 
-  # Staging convenience; tighten for prod (deletion_protection=true, final snapshot).
   apply_immediately         = true
   skip_final_snapshot       = var.rds_skip_final_snapshot
   final_snapshot_identifier = var.rds_skip_final_snapshot ? null : "${local.name_prefix}-db-final"
@@ -117,7 +93,6 @@ resource "aws_db_instance" "this" {
   tags = { Name = "${local.name_prefix}-db" }
 }
 
-# Store the master connection bits so seeding/ops can fetch them (not the app creds).
 resource "aws_secretsmanager_secret" "rds_master" {
   count = var.enable_rds ? 1 : 0
   name  = "zopkit/${var.environment}/rds-master"

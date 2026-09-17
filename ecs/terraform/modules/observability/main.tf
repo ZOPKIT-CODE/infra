@@ -1,9 +1,3 @@
-# CloudWatch log groups + the ops alarm SNS topic.
-#
-# Groups are created here rather than left to the awslogs driver's auto-create so
-# the name, retention and tags are pinned, and so the execution role's
-# CreateLogStream/PutLogEvents grant can target a known group.
-
 resource "aws_cloudwatch_log_group" "service" {
   for_each = var.services
 
@@ -17,7 +11,6 @@ resource "aws_cloudwatch_log_group" "service" {
   })
 }
 
-# Alarm sink for the per-queue DLQ-depth alarms in the messaging module.
 resource "aws_sns_topic" "ops_alarms" {
   name = "${var.name_prefix}-ops-alarms"
 
@@ -26,7 +19,6 @@ resource "aws_sns_topic" "ops_alarms" {
   })
 }
 
-# Requires manual confirmation from the inbox after apply.
 resource "aws_sns_topic_subscription" "ops_alarms_email" {
   count = var.alarm_email != "" ? 1 : 0
 

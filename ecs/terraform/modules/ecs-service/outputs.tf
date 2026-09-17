@@ -1,7 +1,3 @@
-###############################################################################
-# modules/ecs-service — outputs
-###############################################################################
-
 output "service_name" {
   description = "ECS service name (<name_prefix>-<name>)."
   value       = aws_ecs_service.this.name

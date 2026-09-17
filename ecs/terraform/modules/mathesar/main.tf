@@ -1,11 +1,3 @@
-# mathesar.tf — Mathesar (web DB UI) as an in-VPC ECS service.
-#
-# Reaches the RDS instance over the PRIVATE network (tasks SG → rds SG), so the DB
-# is never publicly exposed. Team accesses Mathesar at https://db.<root_domain>
-# (behind the shared ALB; wildcard cert covers it). Its own metadata lives in a
-# `mathesar_django` database on the RDS instance (created out-of-band via the
-# db-admin task). Gated by var.enabled.
-
 resource "random_password" "mathesar_db" {
   count   = var.enabled ? 1 : 0
   length  = 32
@@ -33,8 +25,6 @@ resource "aws_secretsmanager_secret_version" "mathesar" {
   })
 }
 
-# Allow the ALB to reach Mathesar's container port (8000) — the app SG rules only
-# cover local.services ports, so add Mathesar's explicitly.
 resource "aws_security_group_rule" "tasks_from_alb_mathesar" {
   count                    = var.enabled ? 1 : 0
   type                     = "ingress"
@@ -73,12 +63,6 @@ resource "aws_ecs_task_definition" "mathesar" {
       { name = "POSTGRES_DB", value = "mathesar_django" },
       { name = "POSTGRES_USER", value = "mathesar" },
       { name = "POSTGRES_SSLMODE", value = "require" },
-      # "*" because the ALB health check hits the target's PRIVATE IP with
-      # `Host: <ip>:8000`; a strict host list makes Django answer 400 → the check
-      # fails 5x → ECS kills the task → a ~9-minute restart loop (the service
-      # still "worked" via the real hostname between kills). Host-header strictness
-      # buys nothing here: the task SG only admits traffic FROM the ALB, and the
-      # ALB only forwards the db.<domain> host rule to this target group.
       { name = "ALLOWED_HOSTS", value = "*" },
     ]
     secrets = [
@@ -121,11 +105,8 @@ resource "aws_lb_target_group" "mathesar" {
 resource "aws_lb_listener_rule" "mathesar" {
   count        = var.enabled ? 1 : 0
   listener_arn = var.alb_listener_arn
-  # Must out-prioritize the tenant_wildcard rule (priority 11, matches
-  # *.<root_domain> incl. db.<root_domain>) so db. routes to Mathesar, not wrapper.
-  priority = 5
+  priority     = 5
 
-  # SSO gate first (only when configured).
   dynamic "action" {
     for_each = var.mathesar_cognito_client_id != "" ? [1] : []
     content {
@@ -175,13 +156,11 @@ resource "aws_ecs_service" "mathesar" {
     container_port   = 8000
   }
 
-  # ALB rule must exist before the service registers targets.
   depends_on = [aws_lb_listener_rule.mathesar]
 
   tags = var.tags
 }
 
-# db.<root_domain> → shared ALB.
 resource "aws_route53_record" "mathesar" {
   count   = var.enabled ? 1 : 0
   zone_id = var.route53_zone_id
@@ -194,4 +173,3 @@ resource "aws_route53_record" "mathesar" {
     evaluate_target_health = true
   }
 }
-

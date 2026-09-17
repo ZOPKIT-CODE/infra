@@ -1,11 +1,3 @@
-###############################################################################
-# modules/ecs-service — variable interface
-#
-# A single reusable module for BOTH ALB-fronted web services and headless
-# workers. Variable names are the authoritative module contract — callers in
-# ecs.tf pass these verbatim.
-###############################################################################
-
 variable "name" {
   description = "Service name suffix, e.g. wrapper-web. Final names use <name_prefix>-<name>."
   type        = string
@@ -26,7 +18,6 @@ variable "cluster_name" {
   type        = string
 }
 
-# --- Task definition ---
 variable "image" {
   description = "Full container image URI including tag (e.g. <ecr_url>:<image_tag>)."
   type        = string
@@ -86,7 +77,6 @@ variable "aws_region" {
   type        = string
 }
 
-# --- ECS service / networking ---
 variable "desired_count" {
   description = "Desired task count. For autoscaled services this is the initial/min seed."
   type        = number
@@ -109,7 +99,6 @@ variable "assign_public_ip" {
   default     = true
 }
 
-# --- ALB wiring (web services only) ---
 variable "needs_alb" {
   description = "Create a target group + listener rule and a load_balancer block. False for workers."
   type        = bool
@@ -176,7 +165,6 @@ variable "health_check_grace_period_seconds" {
   default     = 60
 }
 
-# --- Autoscaling (web services that are leader-safe) ---
 variable "autoscaling_enabled" {
   description = "Create an appautoscaling target + CPU target-tracking policy."
   type        = bool

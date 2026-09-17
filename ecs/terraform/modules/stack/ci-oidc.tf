@@ -10,10 +10,6 @@ module "ci_oidc" {
   tags                = local.common_tags
 }
 
-# account-level singletons (the OIDC provider especially) — a destroy+create
-# would break every repo's deploy workflow until the new provider exists. Keep
-# these blocks indefinitely; they also carry the move into the `prod` workspace.
-# Re-exported so the root output surface is unchanged by the move into the module.
 output "github_deploy_role_arn" {
   description = "ARN to put in each repo's GitHub Actions workflow (role-to-assume). Null in envs with enable_ci_oidc=false."
   value       = module.ci_oidc.github_deploy_role_arn
