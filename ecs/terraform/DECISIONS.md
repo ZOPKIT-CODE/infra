@@ -231,6 +231,36 @@ needlessly restrictive until you know what it prevented.
 > required for autoscaled services (so the appautoscaling-driven count is not
 > reverted on every apply).
 >
+> task_definition joined that list on 2026-09-20, which SPLITS ownership of a
+> service in two:
+>
+>   - Terraform owns the service's SHAPE and the task-definition FAMILY: cpu,
+>     memory, env, secrets, roles, ports, log config. An apply still registers a
+>     new revision when any of that changes.
+>   - The release pipeline owns WHICH REVISION THE SERVICE RUNS. It clones the
+>     latest revision of the family, swaps only the image, registers, and calls
+>     update-service.
+>
+> Before this, `task_definition = aws_ecs_task_definition.this.arn` meant every
+> image rollout HAD to be a terraform apply against a state shared by every
+> service in the environment. That coupling caused three separate incidents:
+>
+>   - 2026-06-12: a git-committed tag record went stale and an unrelated apply
+>     rolled staging CRM back four commits.
+>   - 2026-08-10: a CRM release ran `apply -target=module.services["crm-web"]`
+>     against a drifted state. `-target` does not protect resources REMOVED from
+>     config, so the apply destroyed lens-web's live ECS service and task
+>     definition, then failed before reaching crm-web. B2B-CRM left the shared
+>     pipeline that day and has deployed itself direct-to-ECS ever since.
+>   - 2026-08-06..10: every remaining repository_dispatch release failed, because
+>     a targeted apply still tried DeleteUserPoolClient, DeleteSecret and
+>     CreateSecret, none of which the deploy role may do.
+>
+> The consequence to know about: a terraform-side config change (a new env var,
+> a rotated secret reference) registers a revision the running service does NOT
+> pick up. It goes live on the service's next release. If it must go live
+> immediately, run a release for that service — do not remove this line.
+>
 
 ## `modules/mathesar/main.tf`
 

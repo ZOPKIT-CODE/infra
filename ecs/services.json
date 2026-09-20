@@ -137,7 +137,7 @@
     "lens-web": {
       "app": "lens",
       "ecr": "lens-backend",
-      "source_repo": "ursrudra/zopkit-lens",
+      "source_repo": "ZOPKIT-CODE/zopkit-lens",
       "repo_env": "LENS_REPO",
       "dockerfile": "backend/Dockerfile",
       "context": ".",

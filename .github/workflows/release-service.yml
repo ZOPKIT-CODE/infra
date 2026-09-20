@@ -1,0 +1,190 @@
+name: release-service
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        required: true
+        type: string
+      environment:
+        type: string
+        default: staging
+      image_tag:
+        type: string
+        default: ""
+      infra_ref:
+        type: string
+        default: main
+      build:
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-${{ inputs.environment }}-${{ inputs.service }}
+      cancel-in-progress: false
+    env:
+      AWS_REGION: us-east-1
+      ECR_REGISTRY: 207567767101.dkr.ecr.us-east-1.amazonaws.com
+      SERVICE: ${{ inputs.service }}
+      ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/checkout@v6
+        with:
+          repository: ZOPKIT-CODE/infra
+          ref: ${{ inputs.infra_ref }}
+          path: .infra
+
+      - name: Resolve config
+        id: cfg
+        run: |
+          M=.infra/ecs/services.json
+          jq -e --arg s "$SERVICE" '.services | has($s)' "$M" >/dev/null || {
+            echo "::error::Unknown service '$SERVICE'. Known: $(jq -r '.services|keys|join(" ")' "$M")"; exit 1; }
+          case "$ENVIRONMENT" in
+            staging) PREFIX=zopkit-staging; ROOT=staging.zopkit.com; ROLE=arn:aws:iam::207567767101:role/zopkit-staging-github-deploy ;;
+            prod)    PREFIX=zopkit-prod;    ROOT=zopkit.com;         ROLE=arn:aws:iam::207567767101:role/zopkit-prod-github-deploy ;;
+            *) echo "::error::Unknown environment '$ENVIRONMENT' (staging|prod)"; exit 1 ;;
+          esac
+          get() { jq -r --arg s "$SERVICE" --arg k "$1" '.services[$s][$k] // empty' "$M"; }
+
+          {
+            echo "prefix=$PREFIX"
+            echo "cluster=$PREFIX-ecs"
+            echo "role=$ROLE"
+            echo "ecr=$(get ecr)"
+            echo "dockerfile=$(get dockerfile)"
+            echo "context=$(get context)"
+            echo "target=$(get target)"
+            echo "sibling=$(get sibling)"
+            echo "migrate=$(jq -r --arg s "$SERVICE" '.services[$s].migrate' "$M")"
+            echo "migrate_cmd=$(jq -c --arg s "$SERVICE" '.services[$s].migrate_cmd // []' "$M")"
+          } >>"$GITHUB_OUTPUT"
+
+          SUB="$(get api_subdomain)"; HP="$(get health_path)"
+          if [ -n "$SUB" ] && [ -n "$HP" ]; then
+            echo "health=https://${SUB}.${ROOT}${HP}" >>"$GITHUB_OUTPUT"
+          else
+            echo "health=" >>"$GITHUB_OUTPUT"
+          fi
+
+          TAG="${{ inputs.image_tag }}"
+          [ -n "$TAG" ] || TAG="$(git rev-parse --short HEAD)"
+          echo "tag=$TAG" >>"$GITHUB_OUTPUT"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.cfg.outputs.role }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & push image
+        if: ${{ inputs.build }}
+        run: |
+          REPO="${{ steps.cfg.outputs.ecr }}"; TAG="${{ steps.cfg.outputs.tag }}"
+          IMAGE="$ECR_REGISTRY/$REPO:$TAG"
+          if aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$TAG" >/dev/null 2>&1; then
+            echo "::notice::$REPO:$TAG already in ECR — skipping build+push"
+            exit 0
+          fi
+          ARGS=(--platform linux/amd64 -f "${{ steps.cfg.outputs.dockerfile }}")
+          [ -n "${{ steps.cfg.outputs.target }}" ] && ARGS+=(--target "${{ steps.cfg.outputs.target }}")
+          docker build "${ARGS[@]}" -t "$IMAGE" "${{ steps.cfg.outputs.context }}"
+          docker push "$IMAGE"
+
+      - name: Release
+        id: release
+        run: |
+          PREFIX="${{ steps.cfg.outputs.prefix }}"; CL="${{ steps.cfg.outputs.cluster }}"
+          TAG="${{ steps.cfg.outputs.tag }}"
+          IMAGE="$ECR_REGISTRY/${{ steps.cfg.outputs.ecr }}:$TAG"
+          FAMILY="$PREFIX-$SERVICE"
+
+          ST=$(aws ecs describe-services --cluster "$CL" --services "$PREFIX-$SERVICE" \
+            --query 'services[0].status' --output text 2>/dev/null || true)
+          [ "$ST" = "ACTIVE" ] || {
+            echo "::error::$PREFIX-$SERVICE is not an ACTIVE service in $CL (status: ${ST:-absent}). A release updates an existing service; create it with a Terraform apply first."
+            exit 1; }
+
+          aws ssm put-parameter --name "/zopkit/$ENVIRONMENT/deployed-tag/$SERVICE" \
+            --value "$TAG" --type String --overwrite
+
+          aws ecs describe-task-definition --task-definition "$FAMILY" \
+            --query 'taskDefinition' --output json >current.json
+          jq --arg img "$IMAGE" --arg name "$SERVICE" '
+            .containerDefinitions |= map(if .name == $name then .image = $img else . end)
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy)
+          ' current.json >next.json
+
+          ARN=$(aws ecs register-task-definition --cli-input-json file://next.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "arn=$ARN" >>"$GITHUB_OUTPUT"
+          aws ecs update-service --cluster "$CL" --service "$PREFIX-$SERVICE" \
+            --task-definition "$ARN" >/dev/null
+
+      - name: Run DB migrations
+        if: steps.cfg.outputs.migrate == 'true'
+        run: |
+          CL="${{ steps.cfg.outputs.cluster }}"; SVC="${{ steps.cfg.outputs.prefix }}-$SERVICE"
+          SUB=$(aws ecs describe-services --cluster "$CL" --services "$SVC" --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' --output text | tr '\t' ',')
+          SG=$(aws ecs describe-services --cluster "$CL" --services "$SVC" --query 'services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]' --output text)
+          PUB=$(aws ecs describe-services --cluster "$CL" --services "$SVC" --query 'services[0].networkConfiguration.awsvpcConfiguration.assignPublicIp' --output text)
+          T=$(aws ecs run-task --cluster "$CL" --launch-type FARGATE --task-definition "${{ steps.release.outputs.arn }}" \
+            --overrides "{\"containerOverrides\":[{\"name\":\"$SERVICE\",\"command\":${{ steps.cfg.outputs.migrate_cmd }}}]}" \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUB],securityGroups=[$SG],assignPublicIp=$PUB}" \
+            --query 'tasks[0].taskArn' --output text)
+          aws ecs wait tasks-stopped --cluster "$CL" --tasks "$T"
+          EC=$(aws ecs describe-tasks --cluster "$CL" --tasks "$T" --query 'tasks[0].containers[0].exitCode' --output text)
+          [ "$EC" = "0" ] || { echo "::error::migration exited $EC"; exit 1; }
+
+      - name: Wait for steady state
+        run: aws ecs wait services-stable --cluster "${{ steps.cfg.outputs.cluster }}" --services "${{ steps.cfg.outputs.prefix }}-$SERVICE"
+
+      - name: Smoke test
+        if: steps.cfg.outputs.health != ''
+        run: |
+          for i in $(seq 1 12); do
+            c=$(curl -s -o /dev/null -w '%{http_code}' "${{ steps.cfg.outputs.health }}" || true)
+            [ "$c" = "200" ] && { echo "health 200"; exit 0; }
+            echo "($i) $c"; sleep 6
+          done; echo "::error::health never 200"; exit 1
+
+      - name: Release sibling worker
+        if: steps.cfg.outputs.sibling != ''
+        run: |
+          WK="${{ steps.cfg.outputs.sibling }}"
+          PREFIX="${{ steps.cfg.outputs.prefix }}"; CL="${{ steps.cfg.outputs.cluster }}"
+          TAG="${{ steps.cfg.outputs.tag }}"
+          IMAGE="$ECR_REGISTRY/${{ steps.cfg.outputs.ecr }}:$TAG"
+
+          ST=$(aws ecs describe-services --cluster "$CL" --services "$PREFIX-$WK" \
+            --query 'services[0].status' --output text 2>/dev/null || true)
+          [ "$ST" = "ACTIVE" ] || {
+            echo "::notice::$PREFIX-$WK does not exist in $CL (status: ${ST:-absent}) — nothing to release."
+            exit 0; }
+
+          aws ssm put-parameter --name "/zopkit/$ENVIRONMENT/deployed-tag/$WK" \
+            --value "$TAG" --type String --overwrite
+
+          aws ecs describe-task-definition --task-definition "$PREFIX-$WK" \
+            --query 'taskDefinition' --output json >wk.json
+          jq --arg img "$IMAGE" --arg name "$WK" '
+            .containerDefinitions |= map(if .name == $name then .image = $img else . end)
+            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                  .compatibilities, .registeredAt, .registeredBy)
+          ' wk.json >wk-next.json
+
+          ARN=$(aws ecs register-task-definition --cli-input-json file://wk-next.json \
+            --query 'taskDefinition.taskDefinitionArn' --output text)
+          aws ecs update-service --cluster "$CL" --service "$PREFIX-$WK" --task-definition "$ARN" >/dev/null
+          aws ecs wait services-stable --cluster "$CL" --services "$PREFIX-$WK"
