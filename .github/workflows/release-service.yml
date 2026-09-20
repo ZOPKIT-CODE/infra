@@ -134,13 +134,17 @@ jobs:
 
       - name: Run DB migrations
         if: steps.cfg.outputs.migrate == 'true'
+        env:
+          MIGRATE_CMD: ${{ steps.cfg.outputs.migrate_cmd }}
         run: |
           CL="${{ steps.cfg.outputs.cluster }}"; SVC="${{ steps.cfg.outputs.prefix }}-$SERVICE"
           SUB=$(aws ecs describe-services --cluster "$CL" --services "$SVC" --query 'services[0].networkConfiguration.awsvpcConfiguration.subnets' --output text | tr '\t' ',')
           SG=$(aws ecs describe-services --cluster "$CL" --services "$SVC" --query 'services[0].networkConfiguration.awsvpcConfiguration.securityGroups[0]' --output text)
           PUB=$(aws ecs describe-services --cluster "$CL" --services "$SVC" --query 'services[0].networkConfiguration.awsvpcConfiguration.assignPublicIp' --output text)
+          OV=$(jq -cn --arg name "$SERVICE" --argjson cmd "$MIGRATE_CMD" \
+            '{containerOverrides:[{name:$name,command:$cmd}]}')
           T=$(aws ecs run-task --cluster "$CL" --launch-type FARGATE --task-definition "${{ steps.release.outputs.arn }}" \
-            --overrides "{\"containerOverrides\":[{\"name\":\"$SERVICE\",\"command\":${{ steps.cfg.outputs.migrate_cmd }}}]}" \
+            --overrides "$OV" \
             --network-configuration "awsvpcConfiguration={subnets=[$SUB],securityGroups=[$SG],assignPublicIp=$PUB}" \
             --query 'tasks[0].taskArn' --output text)
           aws ecs wait tasks-stopped --cluster "$CL" --tasks "$T"
