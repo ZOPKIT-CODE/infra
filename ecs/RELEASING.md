@@ -45,6 +45,13 @@ this repo out for the manifest, and builds from the caller's own checkout.
 1. Builds and pushes `<ecr>:<short-sha>`, skipping the build entirely when that
    tag already exists — ECR tags are immutable, so an existing tag is final.
    This is what makes rollback work: pass an old SHA as `image_tag`.
+
+   The build runs under buildx with a GitHub Actions layer cache, scoped per
+   service. Before this, every deploy reinstalled dependencies from scratch:
+   172s for wrapper, 221s for CRM, 139s for lens. The cache lives in the CALLING
+   repo (that is where the build runs), so each app has its own and they cannot
+   evict each other. A registry-backed cache is not an option here — the ECR
+   repos use immutable tags, so a mutable `buildcache` tag cannot be rewritten.
 2. Records the tag at `/zopkit/<env>/deployed-tag/<service>`.
 3. Clones the **latest revision of the task-definition family**, swaps only the
    image, registers the result, and calls `update-service`.

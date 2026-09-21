@@ -94,19 +94,33 @@ jobs:
 
       - uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build & push image
+      - name: Is this tag already built?
+        id: img
         if: ${{ inputs.build }}
         run: |
           REPO="${{ steps.cfg.outputs.ecr }}"; TAG="${{ steps.cfg.outputs.tag }}"
-          IMAGE="$ECR_REGISTRY/$REPO:$TAG"
           if aws ecr describe-images --repository-name "$REPO" --image-ids imageTag="$TAG" >/dev/null 2>&1; then
-            echo "::notice::$REPO:$TAG already in ECR — skipping build+push"
-            exit 0
+            echo "::notice::$REPO:$TAG already in ECR (immutable) — skipping build+push"
+            echo "exists=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >>"$GITHUB_OUTPUT"
           fi
-          ARGS=(--platform linux/amd64 -f "${{ steps.cfg.outputs.dockerfile }}")
-          [ -n "${{ steps.cfg.outputs.target }}" ] && ARGS+=(--target "${{ steps.cfg.outputs.target }}")
-          docker build "${ARGS[@]}" -t "$IMAGE" "${{ steps.cfg.outputs.context }}"
-          docker push "$IMAGE"
+
+      - uses: docker/setup-buildx-action@v3
+        if: ${{ inputs.build && steps.img.outputs.exists == 'false' }}
+
+      - uses: docker/build-push-action@v6
+        if: ${{ inputs.build && steps.img.outputs.exists == 'false' }}
+        with:
+          context: ${{ steps.cfg.outputs.context }}
+          file: ${{ steps.cfg.outputs.dockerfile }}
+          target: ${{ steps.cfg.outputs.target }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ env.ECR_REGISTRY }}/${{ steps.cfg.outputs.ecr }}:${{ steps.cfg.outputs.tag }}
+          cache-from: type=gha,scope=${{ inputs.service }}
+          cache-to: type=gha,mode=max,scope=${{ inputs.service }}
+          provenance: false
 
       - name: Release
         id: release
