@@ -72,3 +72,40 @@ the SSM record is corrected to match what is actually running.
 other repo releasing to prod needs adding to `github_deploy_repos` for the prod
 environment first. Gate prod callers behind a GitHub environment with required
 reviewers rather than a separate workflow.
+
+## Publishing a SPA
+
+`.github/workflows/publish-spa.yml` is the frontend counterpart of the release
+workflow. Each app repo BUILDS its own SPA — different package managers, node
+versions and baked `VITE_*` env, none of which generalise — uploads `dist` as an
+artifact, and calls this to publish it:
+
+```yaml
+  build-spa:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: npm ci && npm run build
+      - uses: actions/upload-artifact@v4
+        with: { name: spa-dist, path: dist }
+
+  publish-spa:
+    needs: build-spa
+    uses: ZOPKIT-CODE/infra/.github/workflows/publish-spa.yml@main
+    permissions: { id-token: write, contents: read }
+    with:
+      app: crm
+      environment: staging
+```
+
+Bucket, CloudFront distribution, smoke URL and the `no_cache` file list come
+from the `frontends` block in `ecs/services.json`.
+
+`no_cache` is the load-bearing field. Everything NOT in it is uploaded with
+`public,max-age=31536000,immutable`, so a file missing from the list is a file
+browsers will pin for a year — `index.html` and any service-worker or manifest
+asset must be listed. Lens's list is the longest because of its PWA assets
+(`workbox-*`, `manifest*.webmanifest`, `registerSW.js`).
+
+The publish always ends with a smoke test against the live URL, which only lens
+did before.

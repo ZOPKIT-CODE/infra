@@ -53,7 +53,18 @@
     "  own the task definition, so every academy deploy creates drift. Pick one owner",
     "  before routing academy through this manifest.",
     "",
-    "lens-web migrates from the GitHub runner (pnpm db:migrate against DATABASE_URL), not as an ECS task -- its image does not ship the drizzle meta/_journal.json, so a container-side migrate exits 1. migrate is false here and lens's own workflow runs its migration step BEFORE calling the shared release."
+    "lens-web migrates from the GitHub runner (pnpm db:migrate against DATABASE_URL), not as an ECS task -- its image does not ship the drizzle meta/_journal.json, so a container-side migrate exits 1. migrate is false here and lens's own workflow runs its migration step BEFORE calling the shared release.",
+    "",
+    "FRONTENDS -- the `frontends` block feeds .github/workflows/publish-spa.yml, the",
+    "shared S3+CloudFront publish. Each app repo still BUILDS its own SPA (different",
+    "package managers, node versions and baked VITE_* env) and uploads dist as an",
+    "artifact; only the publish half is shared. no_cache lists the files served with",
+    "no-cache -- everything else gets the immutable one-year header, so a file missing",
+    "from this list is a file browsers will pin for a year.",
+    "",
+    "wrapper's only frontend environment is PROD: a push to its main releases the API",
+    "to staging while shipping the SPA to app.zopkit.com. That split predates this",
+    "manifest and is recorded here rather than hidden."
   ],
   "services": {
     "wrapper-web": {
@@ -167,6 +178,51 @@
       "health_path": "/health",
       "sibling": null,
       "source_ref": "dev"
+    }
+  },
+  "frontends": {
+    "wrapper": {
+      "no_cache": [
+        "index.html",
+        "sw.js*"
+      ],
+      "environments": {
+        "prod": {
+          "bucket": "zopkit-prod-wrapper-fe",
+          "distribution": "EN60I8X0N59OO",
+          "smoke_url": "https://app.zopkit.com/"
+        }
+      }
+    },
+    "crm": {
+      "no_cache": [
+        "index.html"
+      ],
+      "environments": {
+        "staging": {
+          "bucket": "zopkit-staging-crm-fe",
+          "distribution": "E2ELWFG0TOGKN",
+          "smoke_url": "https://crm.staging.zopkit.com/"
+        }
+      }
+    },
+    "lens": {
+      "no_cache": [
+        "index.html",
+        "gallery.html",
+        "sw.js*",
+        "workbox-*",
+        "manifest.webmanifest",
+        "manifest-*.webmanifest",
+        "registerSW.js"
+      ],
+      "environments": {
+        "staging": {
+          "bucket": "zopkit-staging-lens-fe",
+          "distribution": "E1XQDQM0R9V65M",
+          "smoke_url": "https://lens.staging.zopkit.com/"
+        }
+      }
     }
   }
 }

@@ -1,0 +1,99 @@
+name: publish-spa
+
+on:
+  workflow_call:
+    inputs:
+      app:
+        required: true
+        type: string
+      environment:
+        type: string
+        default: staging
+      artifact:
+        type: string
+        default: spa-dist
+      infra_ref:
+        type: string
+        default: main
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: publish-spa-${{ inputs.environment }}-${{ inputs.app }}
+      cancel-in-progress: false
+    env:
+      AWS_REGION: us-east-1
+      APP: ${{ inputs.app }}
+      ENVIRONMENT: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          repository: ZOPKIT-CODE/infra
+          ref: ${{ inputs.infra_ref }}
+          path: .infra
+
+      - name: Resolve frontend config
+        id: cfg
+        run: |
+          M=.infra/ecs/services.json
+          jq -e --arg a "$APP" '.frontends | has($a)' "$M" >/dev/null || {
+            echo "::error::Unknown frontend '$APP'. Known: $(jq -r '.frontends|keys|join(" ")' "$M")"; exit 1; }
+          jq -e --arg a "$APP" --arg e "$ENVIRONMENT" '.frontends[$a].environments | has($e)' "$M" >/dev/null || {
+            echo "::error::$APP has no '$ENVIRONMENT' frontend. Known: $(jq -r --arg a "$APP" '.frontends[$a].environments|keys|join(" ")' "$M")"; exit 1; }
+
+          case "$ENVIRONMENT" in
+            staging) ROLE=arn:aws:iam::207567767101:role/zopkit-staging-github-deploy ;;
+            prod)    ROLE=arn:aws:iam::207567767101:role/zopkit-prod-github-deploy ;;
+            *) echo "::error::Unknown environment '$ENVIRONMENT' (staging|prod)"; exit 1 ;;
+          esac
+
+          {
+            echo "role=$ROLE"
+            echo "bucket=$(jq -r --arg a "$APP" --arg e "$ENVIRONMENT" '.frontends[$a].environments[$e].bucket' "$M")"
+            echo "distribution=$(jq -r --arg a "$APP" --arg e "$ENVIRONMENT" '.frontends[$a].environments[$e].distribution' "$M")"
+            echo "smoke=$(jq -r --arg a "$APP" --arg e "$ENVIRONMENT" '.frontends[$a].environments[$e].smoke_url // ""' "$M")"
+          } >>"$GITHUB_OUTPUT"
+
+          jq -r --arg a "$APP" '.frontends[$a].no_cache[]' "$M" >no-cache.txt
+          echo "no-cache entries:"; cat no-cache.txt
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact }}
+          path: dist
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ steps.cfg.outputs.role }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Sync
+        run: |
+          B="${{ steps.cfg.outputs.bucket }}"
+          IMMUTABLE=(); REVALIDATE=(--exclude "*")
+          while IFS= read -r g; do
+            [ -n "$g" ] || continue
+            IMMUTABLE+=(--exclude "$g")
+            REVALIDATE+=(--include "$g")
+          done <no-cache.txt
+
+          aws s3 sync dist "s3://$B" --delete \
+            --cache-control "public,max-age=31536000,immutable" "${IMMUTABLE[@]}"
+          aws s3 sync dist "s3://$B" \
+            --cache-control "no-cache" "${REVALIDATE[@]}"
+
+      - name: Invalidate CloudFront
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ steps.cfg.outputs.distribution }}" --paths "/*" >/dev/null
+
+      - name: Smoke test
+        if: steps.cfg.outputs.smoke != ''
+        run: |
+          curl -sf --retry 6 --retry-all-errors --retry-delay 10 --connect-timeout 10 \
+            "${{ steps.cfg.outputs.smoke }}" | grep -qi "<!doctype html"
