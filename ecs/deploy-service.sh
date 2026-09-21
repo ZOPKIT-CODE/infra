@@ -12,8 +12,9 @@
 #   1. build   — docker build for linux/amd64 (Fargate is x86)
 #   2. push    — to the service's ECR repo, IMMUTABLE git-SHA tag (never :latest)
 #   3. migrate — run DB migrations as a one-off Fargate task (web services only)
-#   4. release — record the tag in SSM (/<project>/<env>/deployed-tag/<svc>) + terraform apply
-#                -target just this service (one-app-at-a-time, others untouched)
+#   4. release — record the tag in SSM (/<project>/<env>/deployed-tag/<svc>), then
+#                register a task-def revision and update-service. NO terraform:
+#                releases and provisioning are separate planes (see RELEASING.md).
 #   5. wait    — block until the ECS service reaches steady state
 #   6. smoke   — hit the health endpoint (web services only)
 #
@@ -24,7 +25,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TF_DIR="$SCRIPT_DIR/terraform"
 
 # ---- load config -----------------------------------------------------------
 [[ -f "$SCRIPT_DIR/deploy.env" ]] || { echo "✖ Missing $SCRIPT_DIR/deploy.env (copy deploy.env.example)"; exit 1; }
@@ -38,20 +38,6 @@ source "$SCRIPT_DIR/deploy.env"
 : "${TASK_SUBNETS:?set in deploy.env}"         # subnet ids for the migration task (PUBLIC if no NAT)
 : "${TASK_SG:?set in deploy.env}"              # security group id for the migration task
 TASK_ASSIGN_PUBLIC_IP="${TASK_ASSIGN_PUBLIC_IP:-DISABLED}"  # ENABLED for public-subnet/no-NAT setups
-
-# ---- derive environment from NAME_PREFIX (e.g. zopkit-prod → prod) ----------
-DEPLOY_ENV="${NAME_PREFIX#*-}"   # "prod" | "staging" | ...
-case "$DEPLOY_ENV" in
-  prod)
-    TF_WORKSPACE="prod"
-    TF_VARFILE="$TF_DIR/terraform.prod.tfvars"
-    [[ -f "$TF_VARFILE" ]] || { echo "✖ Missing $TF_VARFILE — cannot deploy to prod without it"; exit 1; }
-    ;;
-  staging|*)
-    TF_WORKSPACE="default"
-    TF_VARFILE=""
-    ;;
-esac
 
 SERVICE="${1:-}"
 [[ -n "$SERVICE" ]] || { echo "Usage: $0 <wrapper-web|crm-web|crm-worker|fa-web|fa-consumer> [image_tag]"; exit 1; }
@@ -153,28 +139,49 @@ aws ecr get-login-password --region "$AWS_REGION" \
 docker push "$IMAGE"
 fi
 
-# ---- 3. release: record tag + terraform apply (registers the NEW task def) --
+# ---- 3. release: record tag, register a revision, update the service --------
 # Must run BEFORE migrate: ECS run-task cannot override a container image, so the
 # migration task has to use a task definition that already points at the new image.
-echo "▶ [3/6] record tag in SSM + terraform apply…"
-# SSM is the single source of truth for the deployed tag — terraform's data
-# source reads it during this apply and every later one (no stale git record).
+#
+# No terraform. This used to run `terraform apply -target=module.services[...]`
+# against a state shared by every service in the environment, which is how a CRM
+# release destroyed lens-web (2026-08-10). Terraform owns the service shape and
+# the task-def family; this owns which revision runs. See RELEASING.md.
+#
+# Clone the family's LATEST revision, not the one the service is running: an
+# apply registers revisions carrying new env/secrets, and cloning the running
+# one would strand every terraform config change forever.
+echo "▶ [3/6] record tag in SSM + register task def + update service…"
 aws ssm put-parameter \
   --name "/${NAME_PREFIX%%-*}/${NAME_PREFIX#*-}/deployed-tag/${SERVICE}" \
   --value "$TAG" --type String --overwrite --region "$AWS_REGION" > /dev/null
-( cd "$TF_DIR" && \
-  terraform workspace select "$TF_WORKSPACE" && \
-  TF_ARGS=(-auto-approve -target="module.services[\"$SERVICE\"]") && \
-  [[ -n "$TF_VARFILE" ]] && TF_ARGS+=(-var-file="$TF_VARFILE") || true && \
-  terraform apply "${TF_ARGS[@]}" )
+
+TD_JSON="$(mktemp)"; TD_NEXT="$(mktemp)"
+trap 'rm -f "$TD_JSON" "$TD_NEXT"' EXIT
+aws ecs describe-task-definition --task-definition "$NAME_PREFIX-$SERVICE" \
+  --region "$AWS_REGION" --query 'taskDefinition' --output json > "$TD_JSON"
+jq --arg img "$IMAGE" --arg name "$SERVICE" '
+  .containerDefinitions |= map(if .name == $name then .image = $img else . end)
+  | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+        .compatibilities, .registeredAt, .registeredBy)
+' "$TD_JSON" > "$TD_NEXT"
+TASKDEF="$(aws ecs register-task-definition --cli-input-json "file://$TD_NEXT" \
+  --region "$AWS_REGION" --query 'taskDefinition.taskDefinitionArn' --output text)"
+aws ecs update-service --cluster "$CLUSTER" --service "$ECS_SERVICE" \
+  --task-definition "$TASKDEF" --region "$AWS_REGION" > /dev/null
+echo "  ✓ $ECS_SERVICE → ${TASKDEF##*/}"
 
 # ---- 4. migrate (web services only) — uses the new task def from step 3 -----
 if [[ "$MIGRATE" == "true" ]]; then
   echo "▶ [4/6] run migrations as a one-off Fargate task…"
-  TASKDEF="$(aws ecs describe-services --cluster "$CLUSTER" --services "$ECS_SERVICE" \
-            --query 'services[0].taskDefinition' --output text --region "$AWS_REGION")"
-  # No image override (ECS forbids it) — the task def already has the new image.
-  OVERRIDES="{\"containerOverrides\":[{\"name\":\"$SERVICE\",\"command\":$MIGRATE_CMD}]}"
+  # $TASKDEF is the revision registered in step 3 — no image override (ECS
+  # forbids it), the definition already points at the new image.
+  #
+  # Build the overrides with jq, never by interpolating $MIGRATE_CMD into a
+  # quoted string: the array carries its own quotes, which the shell strips,
+  # and aws rejects `[node,dist/db/run-migrations.js]` as invalid JSON.
+  OVERRIDES="$(jq -cn --arg name "$SERVICE" --argjson cmd "$MIGRATE_CMD" \
+    '{containerOverrides:[{name:$name,command:$cmd}]}')"
   TASK_ARN="$(aws ecs run-task --cluster "$CLUSTER" --launch-type FARGATE --region "$AWS_REGION" \
     --task-definition "$TASKDEF" --overrides "$OVERRIDES" \
     --network-configuration "awsvpcConfiguration={subnets=[$TASK_SUBNETS],securityGroups=[$TASK_SG],assignPublicIp=$TASK_ASSIGN_PUBLIC_IP}" \
