@@ -85,6 +85,8 @@ jobs:
           [ -n "$TAG" ] || TAG="$(git rev-parse --short HEAD)"
           echo "tag=$TAG" >>"$GITHUB_OUTPUT"
 
+          rm -rf .infra
+
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ steps.cfg.outputs.role }}
