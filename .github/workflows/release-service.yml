@@ -18,6 +18,9 @@ on:
       build:
         type: boolean
         default: true
+      ref:
+        type: string
+        default: ""
 
 permissions:
   id-token: write
@@ -36,6 +39,8 @@ jobs:
       ENVIRONMENT: ${{ inputs.environment }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.ref }}
 
       - uses: actions/checkout@v6
         with:

@@ -51,7 +51,9 @@
     "  zopkit-staging-academy-fe and invalidates CloudFront E1BG5TRQBP57TT.",
     "  Now that academy-web IS terraform-managed, that pipeline and terraform both",
     "  own the task definition, so every academy deploy creates drift. Pick one owner",
-    "  before routing academy through this manifest."
+    "  before routing academy through this manifest.",
+    "",
+    "lens-web migrates from the GitHub runner (pnpm db:migrate against DATABASE_URL), not as an ECS task -- its image does not ship the drizzle meta/_journal.json, so a container-side migrate exits 1. migrate is false here and lens's own workflow runs its migration step BEFORE calling the shared release."
   ],
   "services": {
     "wrapper-web": {
@@ -142,11 +144,8 @@
       "dockerfile": "backend/Dockerfile",
       "context": ".",
       "target": "production",
-      "migrate": true,
-      "migrate_cmd": [
-        "node",
-        "dist/db/migrate.js"
-      ],
+      "migrate": false,
+      "migrate_cmd": null,
       "api_subdomain": "lens-api",
       "health_path": "/api/health",
       "sibling": null
