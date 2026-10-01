@@ -173,7 +173,21 @@ jobs:
           [ "$EC" = "0" ] || { echo "::error::migration exited $EC"; exit 1; }
 
       - name: Wait for steady state
-        run: aws ecs wait services-stable --cluster "${{ steps.cfg.outputs.cluster }}" --services "${{ steps.cfg.outputs.prefix }}-$SERVICE"
+        # Not `aws ecs wait services-stable`: that waiter is hardcoded to 40 attempts x 15s = a
+        # flat 10-minute ceiling, with no flag to raise it (the CLI's generated `wait` subcommands
+        # don't expose waiter config the way boto3's WaiterConfig does). lens-web alone has taken
+        # 10m46s to stabilize, so the bare waiter is one slow rollout away from a false-negative
+        # failure on an otherwise-healthy deploy. Poll rolloutState directly with a real budget.
+        run: |
+          CL="${{ steps.cfg.outputs.cluster }}"; SVC="${{ steps.cfg.outputs.prefix }}-$SERVICE"
+          for i in $(seq 1 80); do   # 80 x 15s = 20 minutes
+            STATE=$(aws ecs describe-services --cluster "$CL" --services "$SVC" \
+              --query 'services[0].deployments[?status==`PRIMARY`]|[0].rolloutState' --output text)
+            [ "$STATE" = "COMPLETED" ] && { echo "$SVC steady after ~$((i*15))s"; exit 0; }
+            [ "$STATE" = "FAILED" ] && { echo "::error::$SVC rollout failed"; exit 1; }
+            sleep 15
+          done
+          echo "::error::$SVC did not reach steady state within 20 minutes"; exit 1
 
       - name: Smoke test
         if: steps.cfg.outputs.health != ''
@@ -212,4 +226,14 @@ jobs:
           ARN=$(aws ecs register-task-definition --cli-input-json file://wk-next.json \
             --query 'taskDefinition.taskDefinitionArn' --output text)
           aws ecs update-service --cluster "$CL" --service "$PREFIX-$WK" --task-definition "$ARN" >/dev/null
-          aws ecs wait services-stable --cluster "$CL" --services "$PREFIX-$WK"
+
+          # Same 10-minute-ceiling problem as the main service's wait step above - poll instead.
+          SVC="$PREFIX-$WK"
+          for i in $(seq 1 80); do   # 80 x 15s = 20 minutes
+            STATE=$(aws ecs describe-services --cluster "$CL" --services "$SVC" \
+              --query 'services[0].deployments[?status==`PRIMARY`]|[0].rolloutState' --output text)
+            [ "$STATE" = "COMPLETED" ] && { echo "$SVC steady after ~$((i*15))s"; exit 0; }
+            [ "$STATE" = "FAILED" ] && { echo "::error::$SVC rollout failed"; exit 1; }
+            sleep 15
+          done
+          echo "::error::$SVC did not reach steady state within 20 minutes"; exit 1
