@@ -114,6 +114,24 @@ resource "aws_ecs_service" "this" {
 
   health_check_grace_period_seconds = var.needs_alb ? var.health_check_grace_period_seconds : null
 
+  # Failed deploys revert THEMSELVES. Without this, a rollout whose tasks
+  # can't pass health checks just keeps launching replacements until a human
+  # notices (min 100% healthy means the old tasks keep serving, but the
+  # service churns indefinitely and the bad revision stays PRIMARY). With it,
+  # ECS declares the deployment failed after repeated task failures and —
+  # because rollback = true — re-points the service at the last deployment
+  # that reached steady state, no human in the loop.
+  #
+  # This is the AWS-native half of a production rollback story; the deploy
+  # pipeline and the company-admin Deployments tab are the human-driven half.
+  # It only guards STARTUP failures (crash loops, failed health checks, bad
+  # image/secret refs). A deploy that starts cleanly but misbehaves still
+  # needs the manual rollback path.
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
   depends_on = [aws_lb_listener_rule.this]
 
   lifecycle {
