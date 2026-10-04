@@ -23,6 +23,11 @@ locals {
       "SUPABASE_SERVICE_ROLE_KEY",
       "SUPABASE_ANON_KEY",
       "WRAPPER_SECRET_KEY",
+      # Company-admin Deployments tab (GitHub Actions read + workflow
+      # dispatch). Without this mapping a terraform release strips the
+      # hand-added task-def entry and the tab goes dark — which is exactly
+      # what happened on 2026-10-04.
+      "GITHUB_TOKEN",
     ]
 
     crm = [

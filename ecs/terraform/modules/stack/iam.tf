@@ -102,6 +102,48 @@ data "aws_iam_policy_document" "wrapper" {
       var.enable_valkey ? [aws_secretsmanager_secret.valkey[0].arn] : [],
     )
   }
+
+  # Deployments Manager (company-admin → Deployments tab, platform-admin only):
+  # the wrapper backend offers a CI-INDEPENDENT rollback — re-pointing a
+  # service at a previous task-definition revision via UpdateService. That
+  # works even when GitHub is down and takes effect in seconds, complementing
+  # the pipeline re-run rollback. Scope: exactly the services the tab manages.
+  statement {
+    sid    = "DeploymentsEcsRead"
+    effect = "Allow"
+    # Neither action supports resource-level scoping in IAM.
+    actions   = ["ecs:ListTaskDefinitions", "ecs:DescribeTaskDefinition"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid     = "DeploymentsEcsServices"
+    effect  = "Allow"
+    actions = ["ecs:DescribeServices", "ecs:UpdateService"]
+    resources = [
+      for s in ["wrapper-web", "crm-web"] :
+      "arn:aws:ecs:${var.aws_region}:${local.account_id}:service/${aws_ecs_cluster.this.name}/${local.name_prefix}-${s}"
+    ]
+  }
+
+  # UpdateService pointing at a task definition hands that revision's task and
+  # execution roles back to ECS, which requires PassRole — confined to the two
+  # roles those task definitions actually use, and only toward ECS itself.
+  statement {
+    sid     = "DeploymentsEcsPassRole"
+    effect  = "Allow"
+    actions = ["iam:PassRole"]
+    resources = [
+      aws_iam_role.execution.arn,
+      aws_iam_role.task["wrapper"].arn,
+      aws_iam_role.task["crm"].arn,
+    ]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ecs-tasks.amazonaws.com"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "wrapper" {

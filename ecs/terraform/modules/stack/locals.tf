@@ -287,9 +287,13 @@ locals {
 
   service_env = {
     wrapper = merge(local.app_env["wrapper"], {
-      PORT                            = "3000"
-      FRONTEND_URL                    = "https://${local.fqdn["wrapper"].frontend}"
-      AWS_HOSTED_ZONE_ID              = local.route53_zone_id
+      PORT               = "3000"
+      FRONTEND_URL       = "https://${local.fqdn["wrapper"].frontend}"
+      AWS_HOSTED_ZONE_ID = local.route53_zone_id
+      # Deployments Manager ECS rollback — which cluster/services the
+      # company-admin Deployments tab may describe and re-point.
+      ECS_CLUSTER                     = aws_ecs_cluster.this.name
+      ECS_SERVICE_PREFIX              = local.name_prefix
       SNS_INTER_APP_TOPIC_ARN         = module.messaging.topic_arns["inter_app_events"]
       SNS_BROADCAST_TOPIC_ARN         = module.messaging.topic_arns["inter_app_broadcast"]
       SQS_WRAPPER_QUEUE_URL           = module.messaging.queue_urls["wrapper_events"]
