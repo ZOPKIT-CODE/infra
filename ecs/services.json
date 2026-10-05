@@ -191,6 +191,11 @@
           "bucket": "zopkit-prod-wrapper-fe",
           "distribution": "EN60I8X0N59OO",
           "smoke_url": "https://app.zopkit.com/"
+        },
+        "staging": {
+          "bucket": "zopkit-prod-wrapper-fe",
+          "distribution": "EN60I8X0N59OO",
+          "smoke_url": "https://app.zopkit.com/"
         }
       }
     },
