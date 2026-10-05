@@ -74,8 +74,13 @@ jobs:
             echo "migrate_cmd=$(jq -c --arg s "$SERVICE" '.services[$s].migrate_cmd // []' "$M")"
           } >>"$GITHUB_OUTPUT"
 
-          SUB="$(get api_subdomain)"; HP="$(get health_path)"
-          if [ -n "$SUB" ] && [ -n "$HP" ]; then
+          # health_url overrides the <api_subdomain>.<root> composition for
+          # services whose public host does not follow the convention
+          # (entertainment-erp lives at apex zopkit.com, not *.staging.*).
+          SUB="$(get api_subdomain)"; HP="$(get health_path)"; HU="$(get health_url)"
+          if [ -n "$HU" ]; then
+            echo "health=$HU" >>"$GITHUB_OUTPUT"
+          elif [ -n "$SUB" ] && [ -n "$HP" ]; then
             echo "health=https://${SUB}.${ROOT}${HP}" >>"$GITHUB_OUTPUT"
           else
             echo "health=" >>"$GITHUB_OUTPUT"
