@@ -188,7 +188,19 @@ jobs:
           for i in $(seq 1 80); do   # 80 x 15s = 20 minutes
             STATE=$(aws ecs describe-services --cluster "$CL" --services "$SVC" \
               --query 'services[0].deployments[?status==`PRIMARY`]|[0].rolloutState' --output text)
-            [ "$STATE" = "COMPLETED" ] && { echo "$SVC steady after ~$((i*15))s"; exit 0; }
+            if [ "$STATE" = "COMPLETED" ]; then
+              # COMPLETED alone is not enough: when the deployment circuit
+              # breaker rolls a release back, the ROLLBACK deployment becomes
+              # PRIMARY and completes — a green verdict on a reverted release
+              # (observed on lens, run 37255589373). Steady state only counts
+              # if the service is actually running WHAT WE RELEASED.
+              CUR=$(aws ecs describe-services --cluster "$CL" --services "$SVC" \
+                --query 'services[0].taskDefinition' --output text)
+              [ "$CUR" = "${{ steps.release.outputs.arn }}" ] || {
+                echo "::error::$SVC reached steady state on $CUR, not the released ${{ steps.release.outputs.arn }} — the deployment circuit breaker rolled this release back (new tasks failed to start). Check the service events and stopped-task reasons."
+                exit 1; }
+              echo "$SVC steady after ~$((i*15))s"; exit 0
+            fi
             [ "$STATE" = "FAILED" ] && { echo "::error::$SVC rollout failed"; exit 1; }
             sleep 15
           done
@@ -237,7 +249,15 @@ jobs:
           for i in $(seq 1 80); do   # 80 x 15s = 20 minutes
             STATE=$(aws ecs describe-services --cluster "$CL" --services "$SVC" \
               --query 'services[0].deployments[?status==`PRIMARY`]|[0].rolloutState' --output text)
-            [ "$STATE" = "COMPLETED" ] && { echo "$SVC steady after ~$((i*15))s"; exit 0; }
+            if [ "$STATE" = "COMPLETED" ]; then
+              # Same breaker-rollback detection as the main service's wait.
+              CUR=$(aws ecs describe-services --cluster "$CL" --services "$SVC" \
+                --query 'services[0].taskDefinition' --output text)
+              [ "$CUR" = "$ARN" ] || {
+                echo "::error::$SVC reached steady state on $CUR, not the released $ARN — the deployment circuit breaker rolled this release back."
+                exit 1; }
+              echo "$SVC steady after ~$((i*15))s"; exit 0
+            fi
             [ "$STATE" = "FAILED" ] && { echo "::error::$SVC rollout failed"; exit 1; }
             sleep 15
           done
