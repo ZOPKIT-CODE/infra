@@ -146,8 +146,15 @@ jobs:
 
           aws ecs describe-task-definition --task-definition "$FAMILY" \
             --query 'taskDefinition' --output json >current.json
-          jq --arg img "$IMAGE" --arg name "$SERVICE" '
-            .containerDefinitions |= map(if .name == $name then .image = $img else . end)
+          # Stamp SENTRY_RELEASE with the image tag (= commit SHA) so every
+          # event/span this revision emits is correlated to the deploy that
+          # produced it. Without this the SDK falls back to a constant
+          # "1.0.0" and release-based triage is impossible (hit 2026-10-05).
+          jq --arg img "$IMAGE" --arg name "$SERVICE" --arg tag "$TAG" '
+            .containerDefinitions |= map(if .name == $name then
+              .image = $img
+              | .environment = ((.environment // []) | map(select(.name != "SENTRY_RELEASE")) + [{name: "SENTRY_RELEASE", value: $tag}])
+            else . end)
             | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
                   .compatibilities, .registeredAt, .registeredBy)
           ' current.json >next.json
@@ -234,8 +241,11 @@ jobs:
 
           aws ecs describe-task-definition --task-definition "$PREFIX-$WK" \
             --query 'taskDefinition' --output json >wk.json
-          jq --arg img "$IMAGE" --arg name "$WK" '
-            .containerDefinitions |= map(if .name == $name then .image = $img else . end)
+          jq --arg img "$IMAGE" --arg name "$WK" --arg tag "$TAG" '
+            .containerDefinitions |= map(if .name == $name then
+              .image = $img
+              | .environment = ((.environment // []) | map(select(.name != "SENTRY_RELEASE")) + [{name: "SENTRY_RELEASE", value: $tag}])
+            else . end)
             | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
                   .compatibilities, .registeredAt, .registeredBy)
           ' wk.json >wk-next.json
