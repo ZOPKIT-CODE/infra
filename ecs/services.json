@@ -29,6 +29,9 @@
     "                root_domain is staging.zopkit.com or zopkit.com, so the same",
     "                entry serves both environments.",
     "  health_path   path for the smoke test; null for headless workers",
+    "  health_url    FULL smoke-test URL override for services whose public host",
+    "                does not follow <api_subdomain>.<root_domain> (entertainment-erp",
+    "                serves at apex zopkit.com). Wins over the composed form.",
     "  sibling       service that rides this one's release (same image, no migrate).",
     "                Deployed in the SAME run: two dispatches racing the shared",
     "                deploy-queue got the older one cancelled and left the worker a",
@@ -41,7 +44,7 @@
     "CloudTrail). Adding one means one entry here, once the source repo, Dockerfile",
     "path and health endpoint are confirmed:",
     "  ops-web               ecr/repo/health TBC",
-    "  entertainment-erp-web ecr/repo/health TBC",
+    "  entertainment-erp-web ONBOARDED 2026-10-05 - but migrate=false: the pipeline does NOT run its drizzle migrations yet. Team to confirm the compiled entrypoint (likely node dist/server/src/scripts/migrate.js) and flip migrate.",
     "",
     "CONFLICT \u2014 academy-web is deployed by its OWN pipeline today:",
     "  Zopkit/Zopkit-Academy .github/workflows/deploy-dev-ecs.yml (branch `dev`)",
@@ -178,6 +181,21 @@
       "health_path": "/health",
       "sibling": null,
       "source_ref": "dev"
+    },
+    "entertainment-erp-web": {
+      "app": "entertainment-erp",
+      "ecr": "entertainment-erp-backend",
+      "source_repo": "ZOPKIT-CODE/Entertainment-erp",
+      "repo_env": "ENTERTAINMENT_ERP_REPO",
+      "dockerfile": "server/Dockerfile",
+      "context": ".",
+      "target": "production",
+      "migrate": false,
+      "migrate_cmd": null,
+      "api_subdomain": null,
+      "health_path": null,
+      "health_url": "https://entertainment-api.zopkit.com/health",
+      "sibling": null
     }
   },
   "frontends": {
