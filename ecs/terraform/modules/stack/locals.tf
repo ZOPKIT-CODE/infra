@@ -19,6 +19,7 @@ locals {
     lens              = { ecr_repo = "lens-backend", port = 3002, api_subdomain = "lens-api", frontend_subdomain = "lens", tenant_wildcard = false, cdn_proxies_api = true, cognito_client = true, manage_dns = true }
     academy           = { ecr_repo = "academy-backend", port = 8000, api_subdomain = "academy-api", frontend_subdomain = "academy-dev", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = false, manage_dns = true }
     entertainment-erp = { ecr_repo = "entertainment-erp-backend", port = 8080, api_subdomain = "entertainment-api", frontend_subdomain = "entertainment", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = false, manage_dns = false }
+    itsm              = { ecr_repo = "itsm-backend", port = 3000, api_subdomain = "itsm-api", frontend_subdomain = "itsm", tenant_wildcard = false, cdn_proxies_api = false, cognito_client = false, manage_dns = true }
   }
 
   services_all = {
@@ -192,6 +193,28 @@ locals {
       listener_rule_priority            = 110
       health_check_grace_period_seconds = 60
     }
+    "itsm-web" = {
+      enabled                           = true
+      app                               = "itsm"
+      role                              = "itsm"
+      ecr_repo                          = "itsm-backend"
+      cpu                               = 512
+      memory                            = 1024
+      container_port                    = 3000
+      command                           = []
+      extra_env                         = {}
+      needs_alb                         = true
+      host_header                       = local.fqdn["itsm"].api
+      extra_host_headers                = []
+      health_check_path                 = "/healthz"
+      stickiness_enabled                = false
+      autoscaling_enabled               = false
+      desired_count                     = 1
+      min_count                         = 1
+      max_count                         = 1
+      listener_rule_priority            = 120
+      health_check_grace_period_seconds = 90
+    }
   }
 
   services = {
@@ -227,6 +250,7 @@ locals {
     fe_crm          = { name = "${local.name_prefix}-crm-fe", region = var.aws_region, public = false }
     fe_fa           = { name = "${local.name_prefix}-fa-fe", region = var.aws_region, public = false }
     fe_lens         = { name = "${local.name_prefix}-lens-fe", region = var.aws_region, public = false }
+    fe_itsm         = { name = "${local.name_prefix}-itsm-fe", region = var.aws_region, public = false }
   }
 
   frontends_all = {
@@ -234,6 +258,7 @@ locals {
     crm     = { subdomain = "crm", bucket = "fe_crm" }
     fa      = { subdomain = "accounting", bucket = "fe_fa" }
     lens    = { subdomain = "lens", bucket = "fe_lens" }
+    itsm    = { subdomain = "itsm", bucket = "fe_itsm" }
   }
   frontends = { for k, v in local.frontends_all : k => v if !contains(var.disabled_frontends, k) }
 
@@ -365,6 +390,40 @@ locals {
       REGISTRATION_ENABLED = "true"
       STORAGE_DRIVER       = "local"
       FILE_STORAGE_PATH    = "./uploads"
+    })
+
+    itsm = merge(local.app_env["itsm"], {
+      HOST            = "0.0.0.0"
+      PORT            = "3000"
+      ALLOWED_ORIGINS = "https://${local.fqdn["itsm"].frontend}"
+      FRONTEND_URL    = "https://${local.fqdn["itsm"].frontend}"
+      API_PUBLIC_URL  = "https://${local.fqdn["itsm"].api}"
+      TZ              = "UTC"
+
+      # Writable paths. The app's defaults resolve relative to a monorepo
+      # checkout and escape the container root; the image pins these, and they
+      # are repeated here so the task definition is self-describing.
+      LOG_DIR        = "/app/logs"
+      UPLOAD_DIR     = "/app/uploads"
+      GLPI_GRAPH_DIR = "/app/files/_graphs"
+
+      STORAGE_DRIVER    = "cloudinary"
+      CLOUDINARY_FOLDER = "Zopkit-ITASM"
+
+      # The API starts node-cron jobs on boot (initializeCronJobs in
+      # apps/api/src/index.ts). They are NOT leader-elected, so every task in a
+      # scaled service would run the same job concurrently. Keep them off until
+      # a single owner exists; desired_count is 1 today, which is not a guarantee
+      # (a deployment briefly runs two tasks).
+      AUTO_ACTIONS_ENABLED           = "false"
+      CLEANUP_ENABLED                = "false"
+      NOTIFICATION_PROCESSOR_ENABLED = "false"
+      APPROVAL_REMINDER_ENABLED      = "false"
+      RECURRENT_TICKETS_ENABLED      = "false"
+      RECURRENT_CHANGES_ENABLED      = "false"
+      REMINDER_ALERTS_ENABLED        = "false"
+      GLPI_CRONTASK_RUNNER_ENABLED   = "false"
+      GLPI_CRONTASK_INTERNAL_ENABLED = "false"
     })
   }
 
