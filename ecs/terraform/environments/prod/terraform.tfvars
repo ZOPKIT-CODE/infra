@@ -95,5 +95,8 @@ alarm_email = "zopkitrock@gmail.com"
 # lens lives in staging only. Without these two, prod demands an SSM
 # deployed-tag for lens-web that was never created and `terraform plan` fails
 # outright: Error: reading SSM Parameter (/zopkit/prod/deployed-tag/lens-web).
-service_enabled_overrides = { "lens-web" = false }
-disabled_frontends        = ["lens"]
+# itsm is staging-only for now, same reasoning as lens: without these, prod
+# demands /zopkit/prod/deployed-tag/itsm-web, which was never created, and
+# `terraform plan` fails outright.
+service_enabled_overrides = { "lens-web" = false, "itsm-web" = false }
+disabled_frontends        = ["lens", "itsm"]

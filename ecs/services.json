@@ -46,6 +46,17 @@
     "  ops-web               ecr/repo/health TBC",
     "  entertainment-erp-web ONBOARDED 2026-10-05 - but migrate=false: the pipeline does NOT run its drizzle migrations yet. Team to confirm the compiled entrypoint (likely node dist/server/src/scripts/migrate.js) and flip migrate.",
     "",
+    "itsm-web CREATED (not adopted) - unlike every other entry here, nothing for",
+    "itsm exists in AWS yet: no itsm-backend ECR repo, no service, no SSM",
+    "deployed-tag, and ZOPKIT-CODE/ITSM was not in github_deploy_repos. A",
+    "from-scratch create, so Part B steps 7-8 (grant the execution role access to",
+    "an existing secret, import existing resources) do not apply. Step 6 DOES:",
+    "seed /zopkit/staging/deployed-tag/itsm-web before the first plan or it",
+    "hard-errors on the missing parameter. migrate=false because the Supabase",
+    "schema is already applied (582 tables) and this repo's migration runner has",
+    "not been exercised against it. The CloudFront id in the itsm frontends block",
+    "is REPLACE_AFTER_APPLY - fill it in once terraform has created it.",
+    "",
     "CONFLICT \u2014 academy-web is deployed by its OWN pipeline today:",
     "  Zopkit/Zopkit-Academy .github/workflows/deploy-dev-ecs.yml (branch `dev`)",
     "  OIDC role zopkit-staging-academy-github-deploy, builds Dockerfile.backend from",
@@ -196,6 +207,20 @@
       "health_path": null,
       "health_url": "https://entertainment-api.zopkit.com/health",
       "sibling": null
+    },
+    "itsm-web": {
+      "app": "itsm",
+      "ecr": "itsm-backend",
+      "source_repo": "ZOPKIT-CODE/ITSM",
+      "repo_env": "ITSM_REPO",
+      "dockerfile": "apps/api/Dockerfile",
+      "context": ".",
+      "target": "production",
+      "migrate": false,
+      "migrate_cmd": null,
+      "api_subdomain": "itsm-api",
+      "health_path": "/healthz",
+      "sibling": null
     }
   },
   "frontends": {
@@ -244,6 +269,16 @@
           "bucket": "zopkit-staging-lens-fe",
           "distribution": "E1XQDQM0R9V65M",
           "smoke_url": "https://lens.staging.zopkit.com/"
+        }
+      }
+    },
+    "itsm": {
+      "no_cache": ["index.html"],
+      "environments": {
+        "staging": {
+          "bucket": "zopkit-staging-itsm-fe",
+          "distribution": "REPLACE_AFTER_APPLY",
+          "smoke_url": "https://itsm.staging.zopkit.com/"
         }
       }
     }
