@@ -56,6 +56,29 @@
     "schema is already applied (582 tables) and this repo's migration runner has",
     "not been exercised against it. The CloudFront id in the itsm frontends block",
     "is REPLACE_AFTER_APPLY - fill it in once terraform has created it.",
+    "UPDATE 2026-10-08: itsm-web was PROVISIONED BY HAND, not by terraform, and",
+    "is therefore in the same NOT-IN-STATE position as ops-web. The config added",
+    "in #7 is correct and validates, but a staging plan at that time was unsafe to",
+    "apply for reasons unrelated to itsm: state has drifted badly from reality.",
+    "A full plan wanted to CREATE entertainment-erp-backend (exists since",
+    "2026-09-05) and entertainment-erp-web (ACTIVE, 1 task), CREATE a second",
+    "CloudFront distribution plus Route53 record for wrapper (EN60I8X0N59OO is",
+    "live on app.zopkit.com), DELETE the bastion, and replace the wrapper / crm /",
+    "lens task definitions. -target is not an escape hatch here: `moved` blocks in",
+    "the config make terraform demand that targeting also cover the ACM certs and",
+    "the CloudFront distributions, i.e. the dangerous resources.",
+    "",
+    "Live itsm resources, all tagged ManagedBy=manual, ready to import once the",
+    "state is reconciled:",
+    "  ECR          itsm-backend (IMMUTABLE)",
+    "  secret       zopkit/staging/itsm",
+    "  roles        zopkit-staging-itsm-execution, zopkit-staging-task-itsm",
+    "  log group    /ecs/zopkit-staging/itsm-web (30d)",
+    "  target group zopkit-staging-itsm (3000, /healthz)",
+    "  ALB rule     priority 120, itsm-api.staging.zopkit.com",
+    "  service      zopkit-staging-itsm-web (Fargate, 512/1024, circuit breaker on)",
+    "  SPA          s3 zopkit-staging-itsm-fe + CloudFront E258RRO8VZBJIC",
+    "Until it is imported, DO NOT apply a plan that touches module.services.",
     "",
     "CONFLICT \u2014 academy-web is deployed by its OWN pipeline today:",
     "  Zopkit/Zopkit-Academy .github/workflows/deploy-dev-ecs.yml (branch `dev`)",
@@ -277,7 +300,7 @@
       "environments": {
         "staging": {
           "bucket": "zopkit-staging-itsm-fe",
-          "distribution": "REPLACE_AFTER_APPLY",
+          "distribution": "E258RRO8VZBJIC",
           "smoke_url": "https://itsm.staging.zopkit.com/"
         }
       }
