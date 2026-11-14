@@ -27,18 +27,24 @@ usage status — instead of hand-rolling curl commands:
   company-admin panel's "Claude Usage" tab, via `POST /api/admin/claude-usage`.
 - **`report_claude_token_usage`** — unlike the one above, this one is NOT
   self-attested: it scans this developer's own local Claude Code transcripts
-  (`~/.claude/projects/**/*.jsonl`, same machine the MCP server runs on — no
-  `/usage`, no status line, no asking a human) for the last 7 days, dedupes
-  streamed duplicates by `message.id`, and reports real input/output/
-  cache-creation/cache-read token totals, session count, and whether any
-  sessions used web search or spawned subagents, via
+  (`~/.claude/projects/**/*.jsonl` AND their nested `.../subagents/*.jsonl` —
+  same machine the MCP server runs on, no `/usage`, no status line, no
+  asking a human) for a configurable window (`days`, default 7), streamed
+  line-by-line and cached per-file so repeat calls in one session are
+  near-instant. Dedupes streamed duplicates by `message.id` and reports real
+  input/output/cache-creation/cache-read token totals (subagent spend folded
+  in, not just detected), a per-model split, how full the most recently
+  active session's context window currently is, session count, and whether
+  any sessions used web search or spawned subagents — via
   `POST /api/admin/claude-usage/token-breakdown`. Also runs automatically,
-  fire-and-forget, as a side effect of the four bug-report tools above
-  (`submit_bug_resolution`, `fetch_bug_context`, `fetch_assigned_bugs`,
-  `create_bug_report`) on success — so a developer who never touches this
-  tool directly still gets a token breakdown reported just by doing normal
-  bug-report work. Failures from the auto-report path are swallowed
-  entirely; they never surface as a tool error.
+  genuinely non-blocking (never awaited), as a side effect of the four
+  bug-report tools above (`submit_bug_resolution`, `fetch_bug_context`,
+  `fetch_assigned_bugs`, `create_bug_report`) on success — so a developer
+  who never touches this tool directly still gets a token breakdown
+  reported just by doing normal bug-report work, with zero added latency on
+  those calls. Failures from the auto-report path are swallowed entirely;
+  they never surface as a tool error, and (since it isn't awaited) never
+  delay the real response either.
 
 All six are thin wrappers — see `backend/src/features/bug-reports/README.md`
 and `backend/src/features/claude-usage/README.md` for what each endpoint
@@ -150,16 +156,21 @@ Four more, independent of the fetch/resolve flow above:
   `/usage`, the status line, or the account's billing page — there's no way
   for the tool to look this up itself) to update the "Claude Usage" tab in
   the company-admin panel. Pass an optional `note` for context (e.g. "Team
-  plan, resets Monday").
-- Ask it to call `report_claude_token_usage` (no input needed) to push a
-  real token/session breakdown for the last 7 days up to the same "Claude
-  Usage" tab — distinct from and independent of `report_claude_usage`
-  above. You usually don't need to call this directly: it already fires
-  automatically after every successful `fetch_bug_context`,
-  `submit_bug_resolution`, `fetch_assigned_bugs`, or `create_bug_report`
-  call, and a short note gets appended to that tool's own response telling
-  you it happened (e.g. "Also updated your Claude token usage: 2.1M new
-  tokens across 3 session(s) this week.").
+  plan, resets Monday"), and an optional `resetsAt` (ISO timestamp) whenever
+  you can see a concrete reset time (e.g. in the status line's rate-limit
+  JSON) — this is what lets the panel show real staleness instead of a
+  human having to parse a reset time out of free-text `note`.
+- Ask it to call `report_claude_token_usage` (optionally with `days: N` to
+  scan a window other than the default 7) to push a real token/model/context
+  breakdown up to the same "Claude Usage" tab — distinct from and
+  independent of `report_claude_usage` above. You usually don't need to call
+  this directly: it already fires automatically after every successful
+  `fetch_bug_context`, `submit_bug_resolution`, `fetch_assigned_bugs`, or
+  `create_bug_report` call, genuinely in the background (it's never awaited,
+  so it adds no latency and its own response text never shows up in that
+  tool's reply) — this standalone call is for an explicit, on-demand check
+  with a full summary (tokens by model, current context occupancy, subagent
+  share) in the response.
 
 ## Notes
 
@@ -173,3 +184,86 @@ Four more, independent of the fetch/resolve flow above:
 - `fetch_bug_context` and `submit_bug_resolution` still need a report id —
   this server doesn't search or browse. `fetch_assigned_bugs` is the one tool
   that doesn't require knowing an id up front.
+- `report_claude_token_usage`'s breakdown only ever sends the BASENAME of a
+  session's working directory (e.g. `isocode`, not `/Users/you/Downloads/
+  isocode`) to the company-admin panel — real project names, no full
+  filesystem paths or usernames, even though the local scan reads the full
+  path off the transcript.
+
+---
+
+## Usage reporting (v1.8.0)
+
+Three reporters ship alongside the MCP server. They are plain commands
+Claude Code spawns — a status line and two hooks — not MCP tools, because
+what they report has to be captured at moments no tool call happens at.
+
+```bash
+npx zopkit-bug-resolution-mcp --init-usage-reporting --api-key bugres_…
+# then restart Claude Code
+```
+
+That writes `~/.claude/.zopkit-usage.json` (mode 0600 — it holds your API
+key) and adds a `statusLine` plus two hooks to `~/.claude/settings.json`.
+It backs the file up first, never overwrites an existing `statusLine`, and
+is idempotent.
+
+### What each one does
+
+| | fires | reports |
+|---|---|---|
+| `bin/zopkit-statusline.js` | every assistant message (300ms debounce), `/compact`, session start/resume, rate-limit reset | per-session context occupancy, the account's 5h/7d limit percentages, session cost |
+| `bin/zopkit-task-marker.js` | `PostToolUse` on `fetch_bug_context` / `submit_bug_resolution` | the session's cumulative tokens at each end of a task window |
+| `bin/zopkit-session-end.js` | `SessionEnd` | that the session is over |
+
+The status line is the interesting one. Claude Code hands it a JSON payload
+containing `rate_limits.seven_day.used_percentage` — the number `/usage`
+shows, which nothing server-side can fetch on your behalf. A status-line
+script isn't a third party; it runs inside your own session. So that figure
+no longer has to be typed in by a human (`report_claude_usage`, now legacy).
+
+Two rules the status-line script follows, both load-bearing:
+
+1. **It renders before it touches the network.** Claude Code cancels an
+   in-flight status-line script when the next update arrives, so a slow
+   fetch ahead of the first write would blank the bar.
+2. **It whitelists fields, never forwards the payload.** The payload
+   carries more than this feature needs. `session_name` — your session's
+   AI-generated title, i.e. a description of what you're working on — is
+   sent **only** with `--share-session-name`, because it lands on a panel
+   every staff member with the `claude-usage` section can read.
+
+### Checking your Claude Code is new enough
+
+These fields arrived across several releases, so "is my client new enough"
+has a different answer per field:
+
+```bash
+# capture one payload
+cd /tmp && claude --settings '{"statusLine":{"type":"command","command":"tee /tmp/sl.json"}}'
+# …let it render once, exit, then:
+npx zopkit-bug-resolution-mcp --check-statusline < /tmp/sl.json
+```
+
+It prints which fields are present and what goes empty without each.
+
+### Backfilling past bugs
+
+The task markers are already in every transcript you've ever written, so
+bugs you fixed before installing the hook can be attributed retroactively:
+
+```bash
+npx zopkit-bug-resolution-mcp --backfill-tasks --dry-run
+npx zopkit-bug-resolution-mcp --backfill-tasks
+```
+
+Reconstruction is weaker than live markers and tags every window it writes
+`backfill`, which the panel renders differently. Known imprecisions: a
+window includes anything else you did inside it; an un-submitted window is
+closed at the first 30-minute gap (without that, one ran 738 minutes and
+swallowed its whole session); and only transcripts on this machine exist.
+
+### Turning it off
+
+Delete `~/.claude/.zopkit-usage.json` — every reporter no-ops without it —
+or remove the `statusLine` / `hooks` entries from `~/.claude/settings.json`.

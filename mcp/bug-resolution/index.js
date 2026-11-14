@@ -21,11 +21,16 @@
 //     the company-admin panel's "Claude Usage" tab.
 //   - report_claude_token_usage: POST /api/admin/claude-usage/token-breakdown
 //     — REAL, not self-attested: scans this developer's own local Claude
-//     Code transcripts (~/.claude/projects/**/*.jsonl — this server runs on
-//     the same machine) for a 7-day token/web-search/subagent breakdown. The
-//     other four bug-resolution tools above also trigger this automatically
-//     as a fire-and-forget side effect (see tryAutoReportTokenUsage) — "every
-//     task done in the bug reporter" keeps this fresh with zero extra asks.
+//     Code transcripts (~/.claude/projects/**/*.jsonl AND their nested
+//     .../subagents/*.jsonl — this server runs on the same machine) for a
+//     token/model/context breakdown over a configurable window (default 7
+//     days): per-model token split, how full the most recently active
+//     session's context window is right now, and web-search/subagent usage
+//     — subagent token spend is folded into the totals, not just detected.
+//     The other four bug-resolution tools above also trigger this
+//     automatically as a genuinely non-blocking side effect
+//     (tryAutoReportTokenUsage never awaited) — "every task done in the bug
+//     reporter" keeps this fresh with zero extra asks and zero added latency.
 // Thin wrapper: all the actual logic (auth, scoping, the DB writes) lives
 // server-side; this just forwards the HTTP calls the README documents.
 //
@@ -34,9 +39,49 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { createReadStream, readdirSync, statSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
+
+// ── CLI subcommands ───────────────────────────────────────────────────────
+// Handled BEFORE the server is constructed (and before the API-key guard
+// below), since --init-usage-reporting exists precisely to configure a
+// machine that has no key yet. Without a subcommand this falls straight
+// through to the stdio MCP server, which is the normal path.
+const argv = process.argv.slice(2);
+function flag(name) {
+  const i = argv.indexOf(`--${name}`);
+  return i === -1 ? undefined : (argv[i + 1]?.startsWith('--') ? true : argv[i + 1] ?? true);
+}
+
+if (argv.includes('--init-usage-reporting')) {
+  const { initUsageReporting } = await import('./lib/init-usage-reporting.js');
+  process.exit(
+    initUsageReporting({
+      apiKey: typeof flag('api-key') === 'string' ? flag('api-key') : undefined,
+      baseUrl: typeof flag('base-url') === 'string' ? flag('base-url') : undefined,
+      shareSessionName: argv.includes('--share-session-name'),
+    })
+  );
+}
+
+if (argv.includes('--check-statusline')) {
+  const { checkStatusline } = await import('./lib/init-usage-reporting.js');
+  const chunks = [];
+  for await (const chunk of process.stdin) chunks.push(chunk);
+  process.exit(await checkStatusline(Buffer.concat(chunks).toString('utf8')));
+}
+
+if (argv.includes('--backfill-tasks')) {
+  const { runBackfill } = await import('./bin/zopkit-backfill-tasks.js');
+  const days = Number(flag('days'));
+  await runBackfill({
+    days: Number.isFinite(days) && days > 0 ? days : 90,
+    dryRun: argv.includes('--dry-run'),
+  });
+  process.exit(process.exitCode ?? 0);
+}
 
 const API_KEY = process.env.BUG_REPORT_API_KEY;
 const BASE_URL = (process.env.BUG_REPORT_API_BASE_URL || 'https://api.zopkit.com').replace(/\/$/, '');
@@ -46,7 +91,7 @@ if (!API_KEY) {
     'Generate one from the company-admin panel (Bug Reports → API Keys) and set it when registering this server.');
 }
 
-const server = new McpServer({ name: 'zopkit-bug-resolution', version: '1.6.0' });
+const server = new McpServer({ name: 'zopkit-bug-resolution', version: '1.8.0' });
 
 const BUG_SEVERITIES = ['low', 'medium', 'high', 'critical'];
 // Keep in sync with BUG_STATUSES in backend/src/db/schema/platform/bug-reports.ts.
@@ -88,7 +133,35 @@ async function fetchImageContentBlock(url) {
 // dedupes by message.id, or totals would be inflated 2-3x.
 const PROJECTS_DIR = join(homedir(), '.claude', 'projects');
 const SUBAGENT_TOOL_NAMES = new Set(['Agent', 'Task']);
+// Client-side web tools (not Anthropic's server-executed web_search/
+// web_fetch — see usage.server_tool_use below, a DIFFERENT mechanism) show up
+// as ordinary tool_use blocks instead. Both count as "used web search" for
+// weeklySessionsWithWebSearch; missing this half undercounted it before.
+const WEB_TOOL_NAMES = new Set(['WebSearch', 'WebFetch']);
 
+// Context-window ceiling per model family — used only to turn
+// currentContextTokens into a percentage the panel can render as a bar.
+// Heuristic, not queried from Anthropic (there's no local API for "is this
+// account's extended-context beta on"): Sonnet ships with a 1M-token beta
+// context window in Claude Code; Opus/Haiku are the standard 200k. Falls
+// back to 200k for anything unrecognized — an undercount of the true limit
+// is the safe failure direction (a 1M-context Opus session would just show
+// as "over 100%", visibly wrong and prompting a fix, not silently hidden).
+function contextLimitForModel(model) {
+  if (!model) return 200_000;
+  if (model.includes('sonnet')) return 1_000_000;
+  return 200_000;
+}
+
+/**
+ * Every transcript file to scan in the window: each main session file
+ * PLUS its subagent transcripts (…/<sessionId>/subagents/*.jsonl) — a
+ * separate, nested location a flat directory listing never finds, which is
+ * exactly why subagent token usage was invisible before (an Agent/Task tool
+ * call was detected on the main thread, but what THAT subagent itself spent
+ * was never read at all). Each entry is tagged so the caller can attribute
+ * subagent tokens separately while still rolling them into the session total.
+ */
 function listRecentTranscripts(sinceMs) {
   const files = [];
   let projectDirs;
@@ -107,34 +180,75 @@ function listRecentTranscripts(sinceMs) {
       continue;
     }
     for (const entry of entries) {
-      if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue;
-      const filePath = join(dirPath, entry.name);
+      if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+        const filePath = join(dirPath, entry.name);
+        try {
+          if (statSync(filePath).mtimeMs >= sinceMs) {
+            files.push({ filePath, isSubagent: false, sessionDir: join(dirPath, entry.name.replace(/\.jsonl$/, '')) });
+          }
+        } catch {
+          // file vanished between readdir and stat — skip
+        }
+      }
+    }
+  }
+  // Second pass for subagent files — needs the session dirs discovered above.
+  for (const main of files.slice()) {
+    let subFiles;
+    try {
+      subFiles = readdirSync(join(main.sessionDir, 'subagents'), { withFileTypes: true });
+    } catch {
+      continue; // no subagents dir for this session — the common case
+    }
+    for (const sub of subFiles) {
+      if (!sub.isFile() || !sub.name.endsWith('.jsonl')) continue;
+      const filePath = join(main.sessionDir, 'subagents', sub.name);
       try {
-        if (statSync(filePath).mtimeMs >= sinceMs) files.push(filePath);
+        if (statSync(filePath).mtimeMs >= sinceMs) {
+          files.push({ filePath, isSubagent: true, parentSessionId: basename(main.filePath, '.jsonl') });
+        }
       } catch {
-        // file vanished between readdir and stat — skip
+        // skip
       }
     }
   }
   return files;
 }
 
-/** One session's token totals + what it used — null if the file had nothing
- *  in range (e.g. mtime was recent but every logged message predates sinceMs). */
-function scanTranscript(filePath, sinceMs) {
-  let raw;
+// Per-process cache keyed by (path, mtime, size) — a transcript already
+// scanned this run, unchanged on disk, is never re-read. Only helps within
+// one long-lived MCP server process (one Claude Code session calling this
+// repeatedly), not across separate sessions — still the common case, since
+// the auto-report path fires on every bug-report tool call.
+const scanCache = new Map();
+
+/** One transcript's token totals + what it used — null if nothing in range
+ *  (e.g. mtime was recent but every logged message predates sinceMs).
+ *  Streams line-by-line (readline over a read stream) instead of loading the
+ *  whole file into memory — a long session's transcript can run into the
+ *  hundreds of MB, and the previous readFileSync+split approach held the
+ *  entire thing (plus the split array) in memory at once. */
+async function scanTranscript(filePath, sinceMs) {
+  let stat;
   try {
-    raw = readFileSync(filePath, 'utf8');
+    stat = statSync(filePath);
   } catch {
     return null;
   }
+  const cacheKey = `${filePath}:${stat.mtimeMs}:${stat.size}`;
+  const cached = scanCache.get(cacheKey);
+  if (cached) return cached.sinceMs <= sinceMs ? cached.result : null; // a wider window than what's cached still needs a rescan — conservative
 
   const seenMessageIds = new Set();
   let inputTokens = 0, outputTokens = 0, cacheCreationTokens = 0, cacheReadTokens = 0;
   let usedWebSearch = false, usedSubagents = false;
-  let startedAt = null, cwd = null;
+  let startedAt = null, cwd = null, gitBranch = null, sessionId = null, version = null;
+  /** @type {Record<string, {inputTokens:number, outputTokens:number, cacheCreationTokens:number, cacheReadTokens:number}>} */
+  const byModel = {};
+  let lastModel = null, lastContextTokens = 0, lastTimestamp = null;
 
-  for (const line of raw.split('\n')) {
+  const rl = createInterface({ input: createReadStream(filePath, 'utf8'), crlfDelay: Infinity });
+  for await (const line of rl) {
     if (!line.trim()) continue;
     let entry;
     try {
@@ -143,16 +257,25 @@ function scanTranscript(filePath, sinceMs) {
       continue; // truncated/partial last line — skip it, not the whole file
     }
     if (entry.type !== 'assistant' || !entry.message) continue;
-    if (entry.timestamp && Date.parse(entry.timestamp) < sinceMs) continue;
+    // A missing timestamp means "can't verify this is in-window" — exclude
+    // it rather than risk a pre-window message slipping into the totals (the
+    // opposite bug from before: entry.timestamp && ... let a falsy timestamp
+    // skip the check entirely, i.e. silently PASS it through unfiltered).
+    if (!entry.timestamp || Date.parse(entry.timestamp) < sinceMs) continue;
 
-    if (cwd === null && entry.cwd) cwd = entry.cwd;
-    if (entry.timestamp && (!startedAt || entry.timestamp < startedAt)) startedAt = entry.timestamp;
+    if (cwd === null && entry.cwd) cwd = basename(entry.cwd); // basename only — see upsertTokenBreakdown's privacy comment
+    if (sessionId === null && entry.sessionId) sessionId = entry.sessionId;
+    if (gitBranch === null && entry.gitBranch) gitBranch = entry.gitBranch;
+    if (version === null && entry.version) version = entry.version;
+    if (!startedAt || entry.timestamp < startedAt) startedAt = entry.timestamp;
 
     // Tool-use detection runs on every line, duplicates included — setting a
     // boolean true twice is harmless, unlike double-counting tokens below.
     if (Array.isArray(entry.message.content)) {
       for (const block of entry.message.content) {
-        if (block?.type === 'tool_use' && SUBAGENT_TOOL_NAMES.has(block.name)) usedSubagents = true;
+        if (block?.type !== 'tool_use') continue;
+        if (SUBAGENT_TOOL_NAMES.has(block.name)) usedSubagents = true;
+        if (WEB_TOOL_NAMES.has(block.name)) usedWebSearch = true;
       }
     }
 
@@ -164,32 +287,78 @@ function scanTranscript(filePath, sinceMs) {
 
     const usage = entry.message.usage;
     if (!usage) continue;
-    inputTokens += usage.input_tokens || 0;
-    outputTokens += usage.output_tokens || 0;
-    cacheCreationTokens += usage.cache_creation_input_tokens || 0;
-    cacheReadTokens += usage.cache_read_input_tokens || 0;
+    const model = entry.message.model || 'unknown';
+    const mi = usage.input_tokens || 0, mo = usage.output_tokens || 0;
+    const mc = usage.cache_creation_input_tokens || 0, mr = usage.cache_read_input_tokens || 0;
+    inputTokens += mi; outputTokens += mo; cacheCreationTokens += mc; cacheReadTokens += mr;
+    // Claude Code emits internally-synthesized assistant entries tagged
+    // model: "<synthetic>" (and similar) with zero real usage — real API
+    // calls always cost SOMETHING, so skip attributing a model entry when
+    // every field is zero, rather than littering byModel with noise rows.
+    if (mi + mo + mc + mr > 0) {
+      const m = (byModel[model] ??= { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 });
+      m.inputTokens += mi; m.outputTokens += mo; m.cacheCreationTokens += mc; m.cacheReadTokens += mr;
+    }
+
     const serverTools = usage.server_tool_use;
     if (serverTools && ((serverTools.web_search_requests || 0) > 0 || (serverTools.web_fetch_requests || 0) > 0)) {
       usedWebSearch = true;
     }
+
+    // "Current context occupancy" — what the model was actually carrying at
+    // THIS turn: the uncached input plus everything served from/written to
+    // cache. Tracked off the chronologically LAST REAL message in the file
+    // (not the biggest, and not a trailing zero-usage synthetic entry,
+    // which would otherwise report "0 tokens / <synthetic>" for a session
+    // that actually ended on a real turn).
+    if (mi + mo + mc + mr > 0 && (!lastTimestamp || entry.timestamp >= lastTimestamp)) {
+      lastTimestamp = entry.timestamp;
+      lastModel = model;
+      lastContextTokens = mi + mc + mr;
+    }
   }
 
   const totalTokens = inputTokens + outputTokens + cacheCreationTokens + cacheReadTokens;
-  if (totalTokens === 0) return null;
-  return { totalTokens, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, usedWebSearch, usedSubagents, startedAt, cwd };
+  const result = totalTokens === 0 ? null : {
+    totalTokens, inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens,
+    usedWebSearch, usedSubagents, startedAt, lastTimestamp, cwd, gitBranch, sessionId, version, byModel,
+    currentContextTokens: lastContextTokens,
+    currentContextModel: lastModel,
+  };
+  scanCache.set(cacheKey, { sinceMs, result });
+  return result;
 }
 
-/** Scans every local Claude Code transcript touched in the last `days` days
- *  and aggregates it into the shape reportClaudeTokenUsageSchema expects.
- *  Deliberately NOT scoped to this repo/project — the whole point is "how
- *  much Claude Code usage this week", same scope /usage itself reports. */
-function computeWeeklyTokenBreakdown(days = 7) {
-  const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
-  const sessions = listRecentTranscripts(sinceMs)
-    .map((f) => scanTranscript(f, sinceMs))
-    .filter((s) => s !== null);
+function mergeByModel(target, source) {
+  for (const [model, v] of Object.entries(source)) {
+    const m = (target[model] ??= { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 });
+    m.inputTokens += v.inputTokens; m.outputTokens += v.outputTokens;
+    m.cacheCreationTokens += v.cacheCreationTokens; m.cacheReadTokens += v.cacheReadTokens;
+  }
+}
 
-  const totals = sessions.reduce(
+/**
+ * Scans every local Claude Code transcript touched in the last `days` days
+ * (main sessions AND their subagent transcripts — see listRecentTranscripts)
+ * and aggregates it into the shape reportClaudeTokenUsageSchema expects.
+ * Deliberately NOT scoped to this repo/project — the whole point is "how
+ * much Claude Code usage this week", same scope /usage itself reports.
+ */
+async function computeWeeklyTokenBreakdown(days = 7) {
+  const sinceMs = Date.now() - days * 24 * 60 * 60 * 1000;
+  const fileRefs = listRecentTranscripts(sinceMs);
+  const scanned = await Promise.all(fileRefs.map((f) => scanTranscript(f.filePath, sinceMs)));
+
+  const mainSessions = [];
+  const subagentResults = [];
+  fileRefs.forEach((ref, i) => {
+    const s = scanned[i];
+    if (!s) return;
+    if (ref.isSubagent) subagentResults.push(s);
+    else mainSessions.push(s);
+  });
+
+  const totals = mainSessions.reduce(
     (acc, s) => ({
       inputTokens: acc.inputTokens + s.inputTokens,
       outputTokens: acc.outputTokens + s.outputTokens,
@@ -199,13 +368,47 @@ function computeWeeklyTokenBreakdown(days = 7) {
     { inputTokens: 0, outputTokens: 0, cacheCreationTokens: 0, cacheReadTokens: 0 }
   );
 
-  const topSessions = [...sessions]
+  // Subagent "new work" (input+output+cache-creation, same exclusion as
+  // newTokenCount below) folded into the SAME four columns so the headline
+  // total is actually complete — a session that spawned subagents no longer
+  // silently undercounts what those subagents spent. Also kept as its own
+  // figure (subagentTokens) so the breakdown stays honest about the split.
+  const subagentTokens = subagentResults.reduce((sum, s) => sum + s.inputTokens + s.outputTokens + s.cacheCreationTokens, 0);
+  totals.inputTokens += subagentResults.reduce((sum, s) => sum + s.inputTokens, 0);
+  totals.outputTokens += subagentResults.reduce((sum, s) => sum + s.outputTokens, 0);
+  totals.cacheCreationTokens += subagentResults.reduce((sum, s) => sum + s.cacheCreationTokens, 0);
+  totals.cacheReadTokens += subagentResults.reduce((sum, s) => sum + s.cacheReadTokens, 0);
+
+  const byModel = {};
+  for (const s of mainSessions) mergeByModel(byModel, s.byModel);
+  for (const s of subagentResults) mergeByModel(byModel, s.byModel);
+
+  // "Right now" context occupancy — pick the MAIN session whose own last
+  // message is chronologically most recent (not whichever started most
+  // recently — a session can run for hours), and use its last-message
+  // context snapshot. null when nothing was scanned at all.
+  const mostRecentSession = mainSessions.reduce(
+    (latest, s) => (!latest || (s.lastTimestamp ?? '') > (latest.lastTimestamp ?? '') ? s : latest),
+    null
+  );
+  const currentContext = mostRecentSession && {
+    tokens: mostRecentSession.currentContextTokens,
+    model: mostRecentSession.currentContextModel,
+    limit: contextLimitForModel(mostRecentSession.currentContextModel),
+  };
+
+  const topSessions = [...mainSessions]
     .sort((a, b) => b.totalTokens - a.totalTokens)
-    .slice(0, 5)
+    .slice(0, 8)
     .map((s) => ({
       totalTokens: s.totalTokens,
       startedAt: s.startedAt || new Date(sinceMs).toISOString(),
       cwd: s.cwd,
+      gitBranch: s.gitBranch,
+      sessionId: s.sessionId,
+      version: s.version,
+      model: s.currentContextModel,
+      contextTokens: s.currentContextTokens,
       usedWebSearch: s.usedWebSearch,
       usedSubagents: s.usedSubagents,
     }));
@@ -214,9 +417,20 @@ function computeWeeklyTokenBreakdown(days = 7) {
     periodStart: new Date(sinceMs).toISOString(),
     periodEnd: new Date().toISOString(),
     ...totals,
-    sessionCount: sessions.length,
-    sessionsWithWebSearch: sessions.filter((s) => s.usedWebSearch).length,
-    sessionsWithSubagents: sessions.filter((s) => s.usedSubagents).length,
+    subagentTokens,
+    byModel,
+    currentContextTokens: currentContext?.tokens ?? null,
+    currentContextModel: currentContext?.model ?? null,
+    currentContextLimit: currentContext?.limit ?? null,
+    sessionCount: mainSessions.length,
+    sessionsWithWebSearch: mainSessions.filter((s) => s.usedWebSearch).length,
+    // A session counts as "used subagents" either because the main thread
+    // itself spawned one (tool_use detection) OR because subagent transcript
+    // files were found for it at all — the two signals can disagree if a
+    // subagent was spawned but its own file hasn't flushed yet.
+    sessionsWithSubagents: mainSessions.filter(
+      (s) => s.usedSubagents || subagentResults.some((sub) => fileRefs.some((r) => r.isSubagent && r.parentSessionId === s.sessionId))
+    ).length,
     topSessions,
   };
 }
@@ -225,43 +439,53 @@ function computeWeeklyTokenBreakdown(days = 7) {
  *  reach the hundreds of millions (every turn re-pays for its whole cached
  *  context, so cache-read alone compounds fast), so a plain toLocaleString()
  *  reads as an alarming wall of digits. Still real numbers — just formatted
- *  for a human skimming a report, not a ledger. */
+ *  for a human skimming a report, not a ledger. One decimal place
+ *  everywhere, including k — the panel (frontend's api.ts) uses the same
+ *  convention, so a number never reads differently in the two places it
+ *  can show up. */
 function formatTokenCount(n) {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
-  if (n >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(1)}k`;
   return String(n);
 }
 
 /** input + output + cache-WRITE tokens — genuinely new content processed
- *  this period. Deliberately excludes cache-READ: that's a heavily-discounted
- *  re-read of context already paid for once, and in a long session it
- *  dwarfs everything else by 10-100x, so folding it into one headline
- *  number would make "new work this week" unreadable. Still reported
- *  separately in full (see the schema) — just not what ranks/headlines. */
+ *  this period (subagent spend already folded in — see computeWeeklyTokenBreakdown).
+ *  Deliberately excludes cache-READ: that's a heavily-discounted re-read of
+ *  context already paid for once, and in a long session it dwarfs
+ *  everything else by 10-100x, so folding it into one headline number would
+ *  make "new work this week" unreadable. Still reported separately in full
+ *  (see the schema) — just not what ranks/headlines. */
 function newTokenCount(breakdown) {
   return breakdown.inputTokens + breakdown.outputTokens + breakdown.cacheCreationTokens;
 }
 
-/** Fire-and-forget: scan + POST the breakdown, swallowing any failure (a
- *  missing ~/.claude/projects dir, a network blip, whatever) — this must
- *  never fail or slow down the tool call it's piggybacking on. Returns a
- *  short status string for an optional footer, or null if it didn't run. */
-async function tryAutoReportTokenUsage() {
-  if (!API_KEY) return null;
-  try {
-    const breakdown = computeWeeklyTokenBreakdown();
-    if (breakdown.sessionCount === 0) return null;
-    const res = await fetch(`${BASE_URL}/api/admin/claude-usage/token-breakdown`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
-      body: JSON.stringify(breakdown),
-    });
-    if (!res.ok) return null;
-    return `${formatTokenCount(newTokenCount(breakdown))} new tokens across ${breakdown.sessionCount} session(s) this week`;
-  } catch {
-    return null; // never let this break the real tool call
-  }
+/**
+ * Fire-and-forget: scan + POST the breakdown, swallowing any failure (a
+ * missing ~/.claude/projects dir, a network blip, whatever) — this must
+ * never fail or slow down the tool call it's piggybacking on. Genuinely
+ * non-blocking now (not awaited by its four callers below) — the scan can
+ * run into the hundreds of MB and take the better part of a second even
+ * streamed, which used to add that same delay to every single bug-report
+ * tool call despite the "fire-and-forget" name. Returns nothing: with no
+ * await, there's no result left by the time the real tool response goes
+ * out, so the old "(Also updated your Claude token usage: ...)" footer is
+ * gone too — the next report_claude_token_usage call (or the next bug tool,
+ * since this still runs after every one) is what actually surfaces it.
+ */
+function tryAutoReportTokenUsage() {
+  if (!API_KEY) return;
+  computeWeeklyTokenBreakdown()
+    .then((breakdown) => {
+      if (breakdown.sessionCount === 0) return;
+      return fetch(`${BASE_URL}/api/admin/claude-usage/token-breakdown`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
+        body: JSON.stringify(breakdown),
+      });
+    })
+    .catch(() => {}); // never let this break (or even be waited on by) the real tool call
 }
 
 server.registerTool(
@@ -314,13 +538,13 @@ server.registerTool(
     }
 
     const report = body?.data;
-    const usageNote = await tryAutoReportTokenUsage();
+    tryAutoReportTokenUsage();
     return {
       content: [{
         type: 'text',
-        text: (report
+        text: report
           ? `Resolution submitted. "${report.title}" is now ${report.status}.`
-          : 'Resolution submitted.') + (usageNote ? `\n\n(Also updated your Claude token usage: ${usageNote}.)` : ''),
+          : 'Resolution submitted.',
       }],
     };
   }
@@ -408,8 +632,7 @@ server.registerTool(
       }
     }
 
-    const usageNote = await tryAutoReportTokenUsage();
-    if (usageNote) content.push({ type: 'text', text: `(Also updated your Claude token usage: ${usageNote}.)` });
+    tryAutoReportTokenUsage();
 
     return { content };
   }
@@ -484,11 +707,11 @@ server.registerTool(
       ? `${reports.length} of ${meta.total} assigned report(s) (showing offset ${meta.offset}–${meta.offset + reports.length - 1}; pass a higher offset for more):`
       : `${reports.length} assigned report(s):`;
 
-    const usageNote = await tryAutoReportTokenUsage();
+    tryAutoReportTokenUsage();
     return {
       content: [{
         type: 'text',
-        text: `${header}\n${summary}` + (usageNote ? `\n\n(Also updated your Claude token usage: ${usageNote}.)` : ''),
+        text: `${header}\n${summary}`,
       }],
     };
   }
@@ -540,13 +763,13 @@ server.registerTool(
     }
 
     const report = body?.data;
-    const usageNote = await tryAutoReportTokenUsage();
+    tryAutoReportTokenUsage();
     return {
       content: [{
         type: 'text',
-        text: (report
+        text: report
           ? `Bug report created: "${report.title}" (id: ${report.id}).`
-          : 'Bug report created.') + (usageNote ? `\n\n(Also updated your Claude token usage: ${usageNote}.)` : ''),
+          : 'Bug report created.',
       }],
     };
   }
@@ -567,9 +790,16 @@ server.registerTool(
     inputSchema: {
       usagePercent: z.number().min(0).max(100).describe('Current usage, 0-100 (fractional values like 72.5 are fine).'),
       note: z.string().max(500).optional().describe('Optional context, e.g. "Team plan, resets Monday".'),
+      // Structured, not buried in `note` — lets the panel show a real
+      // countdown/staleness indicator instead of free text it has to
+      // truncate. Pass it whenever you can see a concrete reset time (e.g.
+      // the statusLine's rate-limit JSON) — omit it if you can't; a
+      // percentage without a known reset time is still worth reporting.
+      resetsAt: z.string().datetime({ offset: true }).optional()
+        .describe('ISO 8601 timestamp this percentage resets at, if known (e.g. from the status line).'),
     },
   },
-  async ({ usagePercent, note }) => {
+  async ({ usagePercent, note, resetsAt }) => {
     if (!API_KEY) {
       return {
         isError: true,
@@ -582,7 +812,7 @@ server.registerTool(
       res = await fetch(`${BASE_URL}/api/admin/claude-usage`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-API-Key': API_KEY },
-        body: JSON.stringify({ usagePercent, note }),
+        body: JSON.stringify({ usagePercent, note, resetsAt }),
       });
     } catch (err) {
       return {
@@ -616,16 +846,22 @@ server.registerTool(
     title: 'Report Claude token usage breakdown',
     description:
       "Scans this developer's own local Claude Code transcripts " +
-      '(~/.claude/projects/**/*.jsonl — this MCP server runs on the same machine, so it can read them ' +
-      'directly) and reports a real token-usage breakdown for the last 7 days: total tokens, how many ' +
-      'sessions, and how many of those sessions used web search or spawned a subagent. Unlike ' +
+      '(~/.claude/projects/**/*.jsonl AND their nested .../subagents/*.jsonl — this MCP server runs on ' +
+      'the same machine, so it can read them directly) and reports a real token/model/context breakdown: ' +
+      'total tokens (including subagent spend, not just the main thread), a per-model split (so it can ' +
+      "actually be priced), how full the most recently active session's context window currently is, and " +
+      'how many sessions used web search or spawned a subagent. Unlike ' +
       "report_claude_usage's percentage, nothing here is self-attested — every number is read off real " +
-      'local files, so call this freely with no arguments; it never needs to ask a human for anything. ' +
-      "The other bug-resolution tools already call this automatically as a side effect, so you usually " +
-      "don't need to call it directly — this exists for an explicit, on-demand check.",
-    inputSchema: {},
+      'local files, so call this freely; it never needs to ask a human for anything. ' +
+      "The other bug-resolution tools already call this automatically (fire-and-forget) as a side effect, " +
+      "so you usually don't need to call it directly — this exists for an explicit, on-demand check, and " +
+      'lets you ask for a window other than the default 7 days.',
+    inputSchema: {
+      days: z.number().int().min(1).max(90).optional()
+        .describe('How many days back to scan (default 7). The reported periodStart/periodEnd always say exactly what was scanned.'),
+    },
   },
-  async () => {
+  async ({ days }) => {
     if (!API_KEY) {
       return {
         isError: true,
@@ -633,10 +869,10 @@ server.registerTool(
       };
     }
 
-    const breakdown = computeWeeklyTokenBreakdown();
+    const breakdown = await computeWeeklyTokenBreakdown(days ?? 7);
     if (breakdown.sessionCount === 0) {
       return {
-        content: [{ type: 'text', text: 'No Claude Code transcripts found in the last 7 days under ~/.claude/projects — nothing to report.' }],
+        content: [{ type: 'text', text: `No Claude Code transcripts found in the last ${days ?? 7} day(s) under ~/.claude/projects — nothing to report.` }],
       };
     }
 
@@ -661,13 +897,24 @@ server.registerTool(
       return { isError: true, content: [{ type: 'text', text: `Failed to report Claude token usage: ${message}` }] };
     }
 
+    const modelLines = Object.entries(breakdown.byModel)
+      .map(([model, t]) => `  - ${model}: ${formatTokenCount(t.inputTokens + t.outputTokens + t.cacheCreationTokens)} new (+${formatTokenCount(t.cacheReadTokens)} cache-read)`)
+      .join('\n');
+    const contextLine = breakdown.currentContextTokens != null
+      ? `Current context (most recently active session, ${breakdown.currentContextModel}): ` +
+        `${formatTokenCount(breakdown.currentContextTokens)} / ${formatTokenCount(breakdown.currentContextLimit)} ` +
+        `(${Math.round((breakdown.currentContextTokens / breakdown.currentContextLimit) * 100)}%)`
+      : 'Current context: unknown (no in-window session found)';
+
     return {
       content: [{
         type: 'text',
         text: `Reported ${formatTokenCount(newTokenCount(breakdown))} new tokens ` +
           `(plus ${formatTokenCount(breakdown.cacheReadTokens)} discounted cache-read re-reads) ` +
-          `across ${breakdown.sessionCount} session(s) this week ` +
-          `(${breakdown.sessionsWithWebSearch} used web search, ${breakdown.sessionsWithSubagents} used subagents).`,
+          `across ${breakdown.sessionCount} session(s) over the last ${days ?? 7} day(s) ` +
+          `(${breakdown.sessionsWithWebSearch} used web search, ${breakdown.sessionsWithSubagents} used subagents, ` +
+          `${formatTokenCount(breakdown.subagentTokens)} of the new-token total came from subagents).\n` +
+          `By model:\n${modelLines}\n${contextLine}`,
       }],
     };
   }

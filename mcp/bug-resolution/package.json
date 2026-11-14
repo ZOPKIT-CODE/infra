@@ -1,8 +1,8 @@
 {
   "name": "zopkit-bug-resolution-mcp",
-  "version": "1.6.0",
+  "version": "1.8.0",
   "type": "module",
-  "description": "MCP server for Zopkit wrapper bug reports: fetch full bug context (with screenshots), submit how a bug was fixed, list bugs assigned to you, file new bug reports, report your Claude Code usage status, and report a real weekly token-usage breakdown from your local transcripts. Requires a BUG_REPORT_API_KEY (generated in the company-admin panel) — see README.md.",
+  "description": "MCP server + status-line/hook reporters for Zopkit wrapper bug reports: fetch full bug context (with screenshots), submit how a bug was fixed, list bugs assigned to you, file new bug reports, and report REAL Claude Code usage \u2014 live per-session context and account rate limits via the status line, plus per-bug token attribution via PostToolUse hooks. Requires a BUG_REPORT_API_KEY (generated in the company-admin panel) \u2014 see README.md.",
   "license": "UNLICENSED",
   "engines": {
     "node": ">=18"
@@ -13,7 +13,9 @@
   },
   "files": [
     "index.js",
-    "README.md"
+    "README.md",
+    "bin/",
+    "lib/"
   ],
   "scripts": {
     "start": "node index.js"
