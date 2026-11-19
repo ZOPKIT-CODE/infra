@@ -114,6 +114,12 @@ variable "disabled_frontends" {
   default     = []
 }
 
+variable "disabled_queues" {
+  description = "SQS queue keys (local.sqs_queues_all) to exclude in this environment. Empty = all queues are built. Removes the queue, its DLQ, SNS subscriptions, queue policy and DLQ alarm; references outside the messaging module are guarded for absence."
+  type        = list(string)
+  default     = []
+}
+
 variable "valkey_node_type" {
   description = "ElastiCache (Valkey) node type."
   type        = string
@@ -254,6 +260,19 @@ variable "rds_admin_cidrs" {
   description = "Admin IP CIDRs allowed to reach the staging DB directly (for seeding + GUI/MCP). Empty = ECS-tasks-only. Use [] for prod (private)."
   type        = list(string)
   default     = []
+}
+
+variable "rds_public_ingress_cidr" {
+  description = <<-EOT
+    TEMPORARY public Postgres ingress on the RDS SG. The prod ECS tasks live in a
+    DIFFERENT VPC than this (shared) RDS with no NAT/peering, so they reach it over
+    the public internet with ephemeral IPs — there is no stable CIDR to allow, hence
+    0.0.0.0/0. Codified so a Terraform apply does NOT strip the rule and take
+    zopkit.com's DB access down (see memory/project-prod-rds-sg-dependency). Empty =
+    no public rule. Replace with VPC peering / a NAT EIP allow-list, then clear this.
+  EOT
+  type        = string
+  default     = ""
 }
 
 variable "enable_bastion" {

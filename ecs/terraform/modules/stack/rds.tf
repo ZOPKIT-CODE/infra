@@ -40,6 +40,21 @@ resource "aws_security_group" "rds" {
     }
   }
 
+  # TEMP public ingress for prod's cross-VPC ECS tasks (see var docs). The
+  # description MUST match the live rule verbatim so Terraform treats it as
+  # unchanged — a differing description forces a revoke+re-authorize, briefly
+  # dropping prod's DB access.
+  dynamic "ingress" {
+    for_each = var.rds_public_ingress_cidr != "" ? [1] : []
+    content {
+      description = "TEMP: prod ECS tasks reach public RDS (no stable egress IP) - replace with VPC peering"
+      from_port   = 5432
+      to_port     = 5432
+      protocol    = "tcp"
+      cidr_blocks = [var.rds_public_ingress_cidr]
+    }
+  }
+
   egress {
     description = "All egress"
     from_port   = 0
