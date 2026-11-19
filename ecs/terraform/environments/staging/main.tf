@@ -40,6 +40,10 @@ module "stack" {
   mutable_tag_repos               = var.mutable_tag_repos
   project                         = var.project
   rds_admin_cidrs                 = var.rds_admin_cidrs
+  # The shared RDS (zopkit-staging-db-restored) is also prod's DB; prod's ECS
+  # tasks reach it over the public internet (different VPC, no peering). Codified
+  # so an apply never strips this rule and breaks zopkit.com's DB access.
+  rds_public_ingress_cidr = "0.0.0.0/0"
   rds_deletion_protection         = var.rds_deletion_protection
   rds_instance_class              = var.rds_instance_class
   rds_publicly_accessible         = var.rds_publicly_accessible
