@@ -203,6 +203,11 @@
           "bucket": "zopkit-staging-crm-fe",
           "distribution": "E2ELWFG0TOGKN",
           "smoke_url": "https://crm.staging.zopkit.com/"
+        },
+        "prod": {
+          "bucket": "zopkit-prod-crm-fe",
+          "distribution": "E1QK8CGR5W0VVV",
+          "smoke_url": "https://crm.zopkit.com/"
         }
       }
     },
