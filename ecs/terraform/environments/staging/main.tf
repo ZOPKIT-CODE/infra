@@ -49,6 +49,10 @@ module "stack" {
   service_desired_count_overrides = var.service_desired_count_overrides
   service_enabled_overrides       = var.service_enabled_overrides
   service_image_tags              = var.service_image_tags
+  # CRM runs in prod only (2026-11-19) — don't build the staging CRM inter-app
+  # queue/DLQ/subscription. The crm business-events queue (business_events_crm)
+  # stays; only the targeted inter-app crm_events queue is removed.
+  disabled_queues = ["crm_events"]
   service_memory_overrides        = var.service_memory_overrides
   single_nat_gateway              = var.single_nat_gateway
   valkey_node_type                = var.valkey_node_type

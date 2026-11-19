@@ -114,6 +114,12 @@ variable "disabled_frontends" {
   default     = []
 }
 
+variable "disabled_queues" {
+  description = "SQS queue keys (local.sqs_queues_all) to exclude in this environment. Empty = all queues are built. Removes the queue, its DLQ, SNS subscriptions, queue policy and DLQ alarm; references outside the messaging module are guarded for absence."
+  type        = list(string)
+  default     = []
+}
+
 variable "valkey_node_type" {
   description = "ElastiCache (Valkey) node type."
   type        = string

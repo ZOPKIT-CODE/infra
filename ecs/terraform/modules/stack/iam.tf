@@ -165,6 +165,7 @@ data "aws_iam_policy_document" "crm" {
     ]
     resources = [
       for k in ["crm_events", "business_events_crm"] : module.messaging.queue_arns[k]
+      if contains(keys(module.messaging.queue_arns), k)
     ]
   }
 
@@ -174,6 +175,7 @@ data "aws_iam_policy_document" "crm" {
     actions = ["sqs:SendMessage"]
     resources = [
       for k in ["crm_events", "business_events_crm"] : module.messaging.dlq_arns[k]
+      if contains(keys(module.messaging.dlq_arns), k)
     ]
   }
 

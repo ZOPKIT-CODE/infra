@@ -229,7 +229,7 @@ locals {
     business_events     = "${local.name_prefix}-business-events"
   }
 
-  sqs_queues = {
+  sqs_queues_all = {
     wrapper_events          = { app = "wrapper", dlq = true, source = "sns", filter_target = "wrapper" }
     notifications_immediate = { app = "wrapper", dlq = true, source = "direct", filter_target = "" }
     notifications_bulk      = { app = "wrapper", dlq = true, source = "direct", filter_target = "" }
@@ -238,6 +238,15 @@ locals {
     accounting_events       = { app = "fa", dlq = true, source = "sns", filter_target = "accounting" }
     business_events_crm     = { app = "crm", dlq = true, source = "sns_business", filter_target = "" }
     business_events_fa      = { app = "fa", dlq = true, source = "sns_business", filter_target = "" }
+  }
+
+  # Per-environment queue removal. Defaults to [] (every queue built), so prod
+  # and any other env are unaffected. Staging sets ["crm_events"] now that CRM
+  # runs in prod only — see environments/staging. References that look the key
+  # up outside the messaging module (service env SQS_INBOUND_QUEUE_URL, the crm
+  # task-role IAM policy) are guarded for its absence.
+  sqs_queues = {
+    for k, v in local.sqs_queues_all : k => v if !contains(var.disabled_queues, k)
   }
 
   s3_buckets = {
@@ -334,7 +343,7 @@ locals {
     })
     crm = merge(local.app_env["crm"], {
       PORT                   = "4000"
-      SQS_INBOUND_QUEUE_URL  = module.messaging.queue_urls["crm_events"]
+      SQS_INBOUND_QUEUE_URL  = try(module.messaging.queue_urls["crm_events"], "")
       SQS_INBOUND_REGION     = var.aws_region
       AWS_S3_BUCKET_NAME     = aws_s3_bucket.buckets["crm_attachments"].id
       SNS_BUSINESS_TOPIC_ARN = module.messaging.topic_arns["business_events"]
