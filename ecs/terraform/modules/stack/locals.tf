@@ -32,7 +32,7 @@ locals {
       memory                            = 1024
       container_port                    = 3000
       command                           = []
-      extra_env                         = {}
+      extra_env                         = { BUSINESS_SUITE_TARGET_APPS = "crm,accounting,ops,affiliate,projects" }
       needs_alb                         = true
       host_header                       = local.fqdn["wrapper"].api
       health_check_path                 = "/health"
@@ -236,6 +236,8 @@ locals {
     notifications_scheduled = { app = "wrapper", dlq = true, source = "direct", filter_target = "" }
     crm_events              = { app = "crm", dlq = true, source = "sns", filter_target = "crm" }
     accounting_events       = { app = "fa", dlq = true, source = "sns", filter_target = "accounting" }
+    affiliate_events        = { app = "affiliate", dlq = true, source = "sns", filter_target = "affiliate" }
+    projects_events         = { app = "projects", dlq = true, source = "sns", filter_target = "projects" }
     business_events_crm     = { app = "crm", dlq = true, source = "sns_business", filter_target = "" }
     business_events_fa      = { app = "fa", dlq = true, source = "sns_business", filter_target = "" }
   }
