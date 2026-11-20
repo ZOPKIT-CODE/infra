@@ -44,6 +44,14 @@ module "stack" {
   rds_instance_class              = var.rds_instance_class
   rds_publicly_accessible         = var.rds_publicly_accessible
   rds_skip_final_snapshot         = var.rds_skip_final_snapshot
+  # Suite connector → HRMS. DELIBERATE cross-env bridge: HRMS has no prod
+  # deployment yet, and the staging instance IS the organization's only (and
+  # therefore de facto live) HRMS. HRMS's selectSignInUser treats the prod
+  # tenant-id hint in the OBO token as a stale/foreign choice and resolves by
+  # email, so single-workspace users work end-to-end; staging-HRMS downtime
+  # degrades only the connector's HR answers, gracefully. Re-point to
+  # hrms-api.zopkit.com when HRMS is promoted — nothing else changes.
+  hrms_api_url = "https://hrms-api.staging.zopkit.com"
   root_domain                     = var.root_domain
   service_cpu_overrides           = var.service_cpu_overrides
   service_desired_count_overrides = var.service_desired_count_overrides
