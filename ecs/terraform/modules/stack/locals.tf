@@ -348,6 +348,10 @@ locals {
       AWS_S3_BUCKET_NAME     = aws_s3_bucket.buckets["crm_attachments"].id
       SNS_BUSINESS_TOPIC_ARN = module.messaging.topic_arns["business_events"]
       WRAPPER_API_URL        = "https://${local.fqdn["wrapper"].api}"
+      # Suite connector: where the hrms__* tools reach HRMS. Not local.fqdn —
+      # HRMS is deployed outside this stack (manual, like itsm pre-import).
+      # Empty (prod today) = those tools answer service_not_configured.
+      HRMS_API_URL           = var.hrms_api_url
       CORS_ORIGINS           = "https://${local.fqdn["crm"].frontend}"
       CLIENT_URL             = "https://${local.fqdn["crm"].frontend}"
     })

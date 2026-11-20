@@ -198,6 +198,12 @@ variable "logo_bucket_override" {
   default     = ""
 }
 
+variable "hrms_api_url" {
+  description = "HRMS API origin for the CRM's suite connector (hrms__* tools call it on behalf of the connected user). HRMS is deployed outside this stack today, so this cannot derive from local.fqdn. Empty = the connector's HRMS tools answer service_not_configured — the graceful off state, so prod stays safe until HRMS exists there."
+  type        = string
+  default     = ""
+}
+
 variable "enable_valkey" {
   description = "Manage the shared Valkey (Redis-compatible) ElastiCache replication group. Set false to stop paying for it while no app hard-requires caching (e.g. a no-real-users testing phase) - REDIS_ENABLED and the REDIS_URL/REDIS_PASSWORD secret injection are dropped for every app when false, so apps degrade to no-cache rather than failing to find a missing secret. Re-enable and re-apply to recreate."
   type        = bool
