@@ -57,6 +57,10 @@ module "stack" {
   # queue/DLQ/subscription. The crm business-events queue (business_events_crm)
   # stays; only the targeted inter-app crm_events queue is removed.
   disabled_queues = ["crm_events"]
+  # Suite connector → HRMS (staging HRMS is deployed outside this stack).
+  # Takes effect whenever staging crm-web runs; prod leaves this empty until
+  # HRMS has a prod deployment — see the hrms_api_url variable description.
+  hrms_api_url = "https://hrms-api.staging.zopkit.com"
   service_memory_overrides        = var.service_memory_overrides
   single_nat_gateway              = var.single_nat_gateway
   valkey_node_type                = var.valkey_node_type

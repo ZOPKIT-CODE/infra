@@ -52,6 +52,14 @@ locals {
       "SLACK_SIGNING_SECRET",
       "CLOUDINARY_API_KEY",
       "CLOUDINARY_API_SECRET",
+      # Suite connector OBO signing key (EC P-256 PKCS8 PEM). The CRM mints
+      # on-behalf-of tokens for cross-app tool calls (hrms__* etc.); siblings
+      # verify against the PUBLIC half at /.well-known/suite-obo-jwks.json.
+      # ⚠ Listed here means the key MUST exist in zopkit/<env>/crm or the task
+      # fails to start (valueFrom on a missing key is a boot error, same class
+      # as the GITHUB_TOKEN lesson above). Present in staging AND prod (empty
+      # string in prod = feature off, boots fine).
+      "SUITE_OBO_PRIVATE_KEY",
     ]
 
     fa = [
