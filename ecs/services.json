@@ -270,6 +270,11 @@
         "index.html"
       ],
       "environments": {
+        "prod": {
+          "bucket": "zopkit-prod-crm-fe",
+          "distribution": "E1QK8CGR5W0VVV",
+          "smoke_url": "https://crm.zopkit.com/"
+        },
         "staging": {
           "bucket": "zopkit-staging-crm-fe",
           "distribution": "E2ELWFG0TOGKN",
