@@ -80,6 +80,27 @@ mathesar_cognito_user_pool_arn = ""
 mathesar_cognito_client_id     = ""
 mathesar_cognito_domain        = ""
 
+# --- Lens public domain override --------------------------------------------
+# Lens's ECS service/task stays in THIS (staging) workspace, but its public
+# frontend domain is the bare zopkit.com apex (lens.zopkit.com), not
+# lens.staging.zopkit.com, to match the pattern other apex-domain apps already
+# use (crm.zopkit.com, accounting.zopkit.com, partner.zopkit.com). This used to
+# be studio.zopkit.com, set up entirely out-of-band (no Terraform resource
+# anywhere referenced "studio") — that's now fully retired; lens.zopkit.com is
+# the one and only public domain.
+# cert_arn is the existing *.zopkit.com wildcard cert (us-east-1, for
+# CloudFront) already reused by those sibling apps — NOT provisioned here,
+# since validating a cert for zopkit.com from the staging workspace would mean
+# writing DNS validation records into a zone this workspace doesn't own.
+# route53_zone_id is zopkit.com's own apex hosted zone, not staging's.
+frontend_apex_overrides = {
+  lens = {
+    domain          = "lens.zopkit.com"
+    cert_arn        = "arn:aws:acm:us-east-1:207567767101:certificate/821c5f70-d509-4ddd-9e22-cca39275b5fa"
+    route53_zone_id = "Z081806332NICURJOX4YS"
+  }
+}
+
 # --- Per-environment app presence -------------------------------------------
 # FA is not deployed in any environment yet (fa-web/fa-consumer are
 # enabled=false and the fa-backend ECR repo is empty). Its staging CloudFront

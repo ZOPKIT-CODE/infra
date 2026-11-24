@@ -28,6 +28,7 @@ module "stack" {
   enable_valkey                   = var.enable_valkey
   environment                     = var.environment
   fargate_assign_public_ip        = var.fargate_assign_public_ip
+  frontend_apex_overrides         = var.frontend_apex_overrides
   github_deploy_repos             = var.github_deploy_repos
   image_tag                       = var.image_tag
   log_retention_days              = var.log_retention_days

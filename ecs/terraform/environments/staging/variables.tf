@@ -40,6 +40,16 @@ variable "apex_frontend_app" {
   default     = ""
 }
 
+variable "frontend_apex_overrides" {
+  description = "Escape hatch for an app whose public frontend FQDN must live on a totally different domain/zone/cert than this workspace's own <subdomain>.root_domain pattern. See the module variable of the same name for the full explanation."
+  type = map(object({
+    domain          = string
+    cert_arn        = string
+    route53_zone_id = string
+  }))
+  default = {}
+}
+
 variable "manage_apex_dns" {
   description = <<-EOT
     Whether to create the live apex A-records (app/api/<root> + the *.<root> tenant

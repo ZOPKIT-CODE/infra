@@ -43,7 +43,13 @@ resource "aws_cloudfront_distribution" "frontends" {
   default_root_object = "index.html"
   price_class         = "PriceClass_100"
 
-  aliases = concat(
+  # frontend_apex_overrides fully replaces this distribution's alias with a
+  # custom domain (e.g. lens.zopkit.com) rather than adding to it - the app
+  # is meant to be reached ONLY at that domain, not also at its default
+  # <subdomain>.root_domain name.
+  aliases = contains(keys(var.frontend_apex_overrides), each.key) ? [
+    var.frontend_apex_overrides[each.key].domain
+    ] : concat(
     ["${each.value.subdomain}.${var.root_domain}"],
     var.apex_frontend_app == each.key ? [var.root_domain] : [],
   )
@@ -124,7 +130,10 @@ resource "aws_cloudfront_distribution" "frontends" {
   }
 
   viewer_certificate {
-    acm_certificate_arn      = aws_acm_certificate_validation.cloudfront.certificate_arn
+    # An override's domain lives outside root_domain, so this workspace's own
+    # wildcard cert (which only SANs root_domain + *.root_domain) can't cover
+    # it - use the pre-issued cert named in the override instead.
+    acm_certificate_arn      = try(var.frontend_apex_overrides[each.key].cert_arn, aws_acm_certificate_validation.cloudfront.certificate_arn)
     ssl_support_method       = "sni-only"
     minimum_protocol_version = "TLSv1.2_2021"
   }
