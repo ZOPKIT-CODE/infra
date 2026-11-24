@@ -90,11 +90,11 @@ resource "aws_cognito_user_pool_client" "clients" {
 
   callback_urls = [
     "https://${local.fqdn[each.key].api}/api/auth/callback",
-    "https://${local.fqdn[each.key].frontend}",
-    "https://${local.fqdn[each.key].frontend}/login/callback",
+    "https://${local.frontend_fqdn_effective[each.key]}",
+    "https://${local.frontend_fqdn_effective[each.key]}/login/callback",
   ]
   logout_urls = [
-    "https://${local.fqdn[each.key].frontend}",
+    "https://${local.frontend_fqdn_effective[each.key]}",
   ]
 
   access_token_validity  = 60

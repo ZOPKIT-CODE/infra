@@ -278,6 +278,17 @@ locals {
     }
   }
 
+  # The public frontend FQDN actually in effect for each app - the default
+  # <subdomain>.root_domain pattern, unless frontend_apex_overrides names a
+  # fully custom domain for that app (see variables.tf). Every place that used
+  # to read local.fqdn[app].frontend for anything PUBLIC-facing (CloudFront
+  # alias, Route53 record, Cognito callback/logout URLs, FRONTEND_URL/
+  # CORS_ORIGINS/PUBLIC_APP_ORIGIN/APP_PUBLIC_URL/TENANT_HOST_SUFFIX) should
+  # read this instead, so the override is a single source of truth.
+  frontend_fqdn_effective = {
+    for k, a in local.apps : k => try(var.frontend_apex_overrides[k].domain, local.fqdn[k].frontend)
+  }
+
   live_apps      = { for k, v in(var.dns_only_live_apps ? { for k2, v2 in local.apps : k2 => v2 if try(local.services["${k2}-web"].enabled, false) } : local.apps) : k => v if v.manage_dns }
   live_frontends = var.dns_only_live_apps ? { for k, v in local.frontends : k => v if try(local.services["${k}-web"].enabled, false) } : local.frontends
 
@@ -296,7 +307,7 @@ locals {
       BASE_DOMAIN               = var.root_domain
       REDIS_ENABLED             = tostring(var.enable_valkey)
       BACKEND_URL               = "https://${local.fqdn[app].api}"
-      FRONTEND_URL              = "https://${local.fqdn[app].frontend}"
+      FRONTEND_URL              = "https://${local.frontend_fqdn_effective[app]}"
     }
   }
 
@@ -308,7 +319,7 @@ locals {
       COGNITO_ISSUER_URL          = "https://cognito-idp.${var.aws_region}.amazonaws.com/${local.cognito_pool_id}"
       COGNITO_DOMAIN              = "https://${local.cognito_domain_name}.auth.${var.aws_region}.amazoncognito.com"
       COGNITO_REDIRECT_URI        = "https://${local.fqdn[app].api}/api/auth/callback"
-      COGNITO_LOGOUT_REDIRECT_URI = "https://${local.fqdn[app].frontend}"
+      COGNITO_LOGOUT_REDIRECT_URI = "https://${local.frontend_fqdn_effective[app]}"
     } if cfg.cognito_client
   }
 
@@ -365,11 +376,11 @@ locals {
     lens = merge(local.app_env["lens"], {
       SERVER_PORT                      = "3002"
       PORT                             = "3002"
-      CORS_ORIGINS                     = "https://${local.fqdn["lens"].frontend}"
-      PUBLIC_APP_ORIGIN                = "https://${local.fqdn["lens"].frontend}"
-      APP_PUBLIC_URL                   = "https://${local.fqdn["lens"].frontend}"
+      CORS_ORIGINS                     = "https://${local.frontend_fqdn_effective["lens"]}"
+      PUBLIC_APP_ORIGIN                = "https://${local.frontend_fqdn_effective["lens"]}"
+      APP_PUBLIC_URL                   = "https://${local.frontend_fqdn_effective["lens"]}"
       TENANT_RLS_ENABLED               = "true"
-      TENANT_HOST_SUFFIX               = local.fqdn["lens"].frontend
+      TENANT_HOST_SUFFIX               = local.frontend_fqdn_effective["lens"]
       DATABASE_SSL_REJECT_UNAUTHORIZED = "true"
       JWT_EXPIRES_IN                   = "8h"
       RATE_LIMIT_MAX                   = "2000"

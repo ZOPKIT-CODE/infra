@@ -82,10 +82,33 @@ resource "aws_acm_certificate_validation" "cloudfront" {
 }
 
 resource "aws_route53_record" "frontend" {
-  for_each = var.manage_apex_dns ? local.live_frontends : {}
+  # Apps in frontend_apex_overrides don't get this workspace's default
+  # <subdomain>.root_domain record at all - see aws_route53_record.frontend_apex_override.
+  for_each = var.manage_apex_dns ? {
+    for k, v in local.live_frontends : k => v if !contains(keys(var.frontend_apex_overrides), k)
+  } : {}
 
   zone_id         = local.route53_zone_id
   name            = "${each.value.subdomain}.${var.root_domain}"
+  type            = "A"
+  allow_overwrite = true
+
+  alias {
+    name                   = aws_cloudfront_distribution.frontends[each.key].domain_name
+    zone_id                = "Z2FDTNDATAQYW2"
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "frontend_apex_override" {
+  # The override's zone is likely not this workspace's own root_domain zone
+  # (e.g. lens.zopkit.com's apex zone while this workspace's zone is
+  # staging.zopkit.com), so this writes into route53_zone_id FROM THE
+  # OVERRIDE, not local.route53_zone_id.
+  for_each = var.manage_apex_dns ? var.frontend_apex_overrides : {}
+
+  zone_id         = each.value.route53_zone_id
+  name            = each.value.domain
   type            = "A"
   allow_overwrite = true
 

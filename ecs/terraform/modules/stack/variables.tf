@@ -40,6 +40,32 @@ variable "apex_frontend_app" {
   default     = ""
 }
 
+variable "frontend_apex_overrides" {
+  description = <<-EOT
+    Escape hatch for an app whose public frontend FQDN must live on a totally
+    different domain/zone/cert than this workspace's own <subdomain>.root_domain
+    pattern - e.g. lens's ECS service stays in the "staging" workspace, but its
+    public domain is the bare "zopkit.com" apex (lens.zopkit.com), not
+    lens.staging.zopkit.com. Keyed by app key; present = this app's CloudFront
+    alias, Route53 record, Cognito callback/logout URLs, and the
+    FRONTEND_URL/CORS_ORIGINS/PUBLIC_APP_ORIGIN/APP_PUBLIC_URL/TENANT_HOST_SUFFIX
+    env vars all use `domain` instead of the default fqdn pattern - and the
+    default <subdomain>.root_domain alias/record are dropped entirely rather
+    than kept alongside it (a clean cutover, not an additional alias).
+    `cert_arn` must be an already-issued ACM cert (us-east-1, for CloudFront)
+    whose SANs cover `domain` - this module does not provision or validate one,
+    since that would mean requesting/validating a cert in a zone this workspace
+    doesn't own. `route53_zone_id` is the hosted zone that `domain` lives in
+    (again, likely not this workspace's own zone).
+  EOT
+  type = map(object({
+    domain          = string
+    cert_arn        = string
+    route53_zone_id = string
+  }))
+  default = {}
+}
+
 variable "manage_apex_dns" {
   description = <<-EOT
     Whether to create the live apex A-records (app/api/<root> + the *.<root> tenant
